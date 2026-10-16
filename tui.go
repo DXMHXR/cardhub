@@ -104,10 +104,11 @@ type model struct {
 
 	notifier     *Notifier // AI link; nil when not running interactively
 	ruleChecking bool
-	recheck      bool   // a rule was added while a check was running
-	copied       string // confirmation after copying the sample prompt
-	paused       bool   // Space: no automatic syncs (or AI rule checks) until resumed
-	query        string // "/" search text the current board was fetched with
+	recheck      bool        // a rule was added while a check was running
+	copied       string      // confirmation after copying the sample prompt
+	paused       bool        // Space: no automatic syncs (or AI rule checks) until resumed
+	confirm      confirmKind // an open "Pause syncing?" / "Quit cardhub?" dialog
+	query        string      // "/" search text the current board was fetched with
 	picker       picker
 
 	fetching  bool
@@ -439,6 +440,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.confirm != confirmNone {
+			return m.confirmKey(msg)
+		}
 		if m.picker.open {
 			return m.pickerKey(msg)
 		}
@@ -584,8 +588,11 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch k.String() {
-	case "q", "ctrl+c":
+	case "ctrl+c": // deliberate: quits straight away
 		return m, tea.Quit
+	case "q", "Q":
+		m.confirm = confirmQuitApp // Q is easy to hit by accident
+		return m, nil
 	case "tab", "shift+tab":
 		if k.String() == "tab" {
 			m.view = (m.view + 1) % numViews
@@ -632,10 +639,16 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clampCursor()
 		return m, m.loadMore()
 	case " ", "space":
-		// pause automatic syncs; things you do (R, scrolling, switching) still fetch once
-		m.paused = !m.paused
-		m.notifier.SetPaused(m.paused)
-		if !m.paused && !m.fetching && m.owner != "" {
+		// pausing asks first (Space is easy to hit by accident); resuming doesn't
+		if !m.paused {
+			if m.owner != "" {
+				m.confirm = confirmPauseSync
+			}
+			return m, nil
+		}
+		m.paused = false
+		m.notifier.SetPaused(false)
+		if !m.fetching {
 			return m, m.fetchCmd() // resume with a fresh sync
 		}
 		return m, nil
@@ -767,6 +780,9 @@ func (m model) View() string {
 	}
 	body = lipgloss.NewStyle().Height(bodyH).MaxHeight(bodyH).Render(body)
 	screen := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	if m.confirm != confirmNone {
+		return overlay(screen, m.confirmDialog(), m.width, m.height)
+	}
 	if m.picker.open { // dialog floats over the dimmed current screen
 		return overlay(screen, m.pickerBox(m.height-4), m.width, m.height)
 	}
