@@ -186,3 +186,7 @@ GitHub doesn't push live updates for project boards, so cardhub polls its GraphQ
 - **The refresh rate adjusts itself.** cardhub uses at most ~15% of the hourly budget, and at most half of what's left before it resets. `-interval` (default 30s) and `+`/`-` set the fastest rate, and 5 minutes is the slowest. When it has slowed down, the footer shows `Every: 1m0s (auto)`, and the API bar shows how much budget is used and when it resets.
 
 Moves are detected even while only some cards are loaded. They're exact for cards on screen, and inferred from changes in column totals for the rest. The `/` search also runs on GitHub, so column totals stay correct. Archived cards are hidden.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
