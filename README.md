@@ -49,6 +49,26 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 
 Other `make` targets: `make build` (build `./cardhub` here), `make test`, `make uninstall`.
 
+### Install with an AI agent
+
+Paste this into Claude Code (or any coding agent that can run commands) and it will do the whole setup for you:
+
+```text
+Install CardHub (https://github.com/DXMHXR/cardhub), a terminal dashboard for GitHub Projects boards, on this machine:
+
+1. If Go 1.24 or newer is installed (`go version`), run `go install github.com/DXMHXR/cardhub@latest`.
+   Otherwise download the archive for this OS and CPU from https://github.com/DXMHXR/cardhub/releases/latest,
+   check it against checksums.txt, and unpack the `cardhub` binary.
+2. Put `cardhub` in a folder that's already on my PATH (prefer ~/.local/bin if it's on PATH; set GOBIN for go install).
+   Only if none is suitable, add Go's bin folder to PATH in my shell config, and tell me what you changed.
+   On macOS, if a downloaded binary is blocked, remove the quarantine flag with xattr.
+3. Make sure GitHub access works: if the GitHub CLI is installed, run
+   `gh auth status` and, if the read:project or repo scope is missing, ask me before running
+   `gh auth refresh --scopes read:project,repo`. Never print or store my token.
+4. Run `cardhub version` and `cardhub doctor`, fix anything doctor marks with ✘ (asking me before changing my
+   GitHub login), and finish by telling me the installed version and how to start it: `cardhub`.
+```
+
 ## Quick start
 
 ```sh
