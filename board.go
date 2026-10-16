@@ -115,7 +115,7 @@ func (m model) columnBox(ci, w int) string {
 	}
 	body := strings.Join(cards, "\n\n")
 	if c.total == 0 {
-		body = lipgloss.Place(inner, visibleCards*cardLines+visibleCards-1, lipgloss.Center, lipgloss.Center, dim.Render("empty"))
+		body = m.emptyState(ci, c, inner, sel)
 	}
 
 	// scroll indicator: ▲ hidden above · position · ▼ hidden below
