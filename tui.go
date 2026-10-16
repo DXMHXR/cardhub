@@ -111,7 +111,7 @@ type model struct {
 	ruleChecking bool
 	recheck      bool        // a rule was added while a check was running
 	copied       string      // confirmation after copying the sample prompt
-	paused       bool        // Space: no automatic syncs (or AI rule checks) until resumed
+	paused       bool        // Space: the board stops refreshing (AI watchers keep running)
 	confirm      confirmKind // an open "Pause syncing?" / "Quit cardhub?" / "Stop watching?" dialog
 	stopTarget   string      // the watcher (owner/number) the stop dialog is about
 	query        string      // "/" search text the current board was fetched with
@@ -247,7 +247,7 @@ func (m model) cardLimits() map[string]int {
 // (plus, the first time, one to learn an off-screen project's title and status
 // field). It runs on its own timer, independent of the project on screen.
 func (m *model) checkRules() tea.Cmd {
-	if m.hub == nil || m.ruleChecking || m.paused {
+	if m.hub == nil || m.ruleChecking {
 		return nil
 	}
 	type job struct {
@@ -403,7 +403,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.paused && !m.fetching && !m.nextFetch.IsZero() && time.Now().After(m.nextFetch) {
 			cmds = append(cmds, m.fetchCmd())
 		}
-		if !m.paused && time.Now().After(m.nextRules) { // AI watchers have their own timer
+		if time.Now().After(m.nextRules) { // AI watchers have their own timer, unaffected by pause
 			cmds = append(cmds, m.checkRules())
 		}
 		m.hub.Prune(idleAfter)
@@ -692,7 +692,6 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.paused = false
-		m.hub.SetPaused(false)
 		if !m.fetching {
 			return m, m.fetchCmd() // resume with a fresh sync
 		}
@@ -1004,9 +1003,6 @@ func (m model) linkBody() (string, lipgloss.Color, bool) {
 	}
 	if st.Queued > 0 {
 		parts = append(parts, fmt.Sprintf("%d queued", st.Queued))
-	}
-	if st.Paused {
-		parts = append(parts, "paused")
 	}
 	agent, accent := ftRule.Render("○")+" "+ftLabel.Render("no agent waiting"), grey
 	if st.Waiting > 0 {

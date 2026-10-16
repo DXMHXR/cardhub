@@ -129,7 +129,7 @@ A board can be named by its **project title** (`"Roadmap"`, case doesn't matter,
 | `V` | switch saved view |
 | `/` | search, using free text or GitHub filters like `label:bug assignee:@me is:open` (`esc` clears) |
 | `R` | sync now |
-| `Space` | pause (asks first) or resume GitHub fetching (the header shows `❚❚ PAUSED`). Only API calls stop: AI watchers stay connected, agents can still add rules and wait, and queued reports are delivered, but rules aren't checked until you resume. `R`, scrolling and switching still fetch once, and agents see the pause in `notify list` |
+| `Space` | pause (asks first) or resume the board's refreshing (the header shows `❚❚ PAUSED`). Only the board on screen stops: AI watchers keep checking and reporting. `R`, scrolling and switching still fetch once |
 | `+` / `-` | refresh faster or slower |
 | `Tab` / `1` `2` `3` | switch between the Board, Stats and AI link screens |
 | `Q` | quit (asks first, and warns if an AI agent is using the board). `Ctrl+C` quits straight away |
@@ -156,7 +156,7 @@ cardhub events --wait --json --board "Roadmap"             # block until there a
 - **`notify list`** shows a watcher's rules, match counts and whether an agent is waiting. **`notify remove <id>`** stops a rule.
 - **`--board`** names the project by title, owner/number or URL. You can leave it out while only one project is watched.
 
-**Stopping watchers:** quitting cardhub stops all of them, and every waiting agent is told. On the AI link screen (`3`), `X` stops a single watcher after asking; its rules are dropped and its waiting agent is told. Watchers for projects not on screen also close by themselves after a minute with no rules and no agent. Pausing (`Space`) only stops GitHub fetching: watchers stay connected, but rules aren't checked until you resume.
+**Stopping watchers:** quitting cardhub stops all of them, and every waiting agent is told. On the AI link screen (`3`), `X` stops a single watcher after asking; its rules are dropped and its waiting agent is told. Watchers for projects not on screen also close by themselves after a minute with no rules and no agent. Pausing the board (`Space`) doesn't affect watchers: they keep checking and reporting.
 
 Exit codes: `0` ok · `1` error · `2` usage · `3` watcher stopped (cardhub quit) · `4` cardhub isn't open.
 

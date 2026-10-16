@@ -88,7 +88,6 @@ type response struct {
 	Sent    int           `json:"sent,omitempty"`
 	Waiting bool          `json:"waiting,omitempty"`
 	Stopped bool          `json:"stopped,omitempty"` // the watcher quit or switched board
-	Paused  bool          `json:"paused,omitempty"`  // syncing is paused: no new reports until resumed
 }
 
 // Notifier is the watcher for one project. The TUI evaluates its rules on a
@@ -104,7 +103,6 @@ type Notifier struct {
 	board      string    // "owner/number" being served, "" when idle
 	title      string    // the project's title, once known
 	since      time.Time
-	paused     bool // the TUI paused syncing: rules aren't checked, nothing new is reported
 	path       string
 	ln         net.Listener
 	rules      []*Rule
@@ -190,23 +188,6 @@ func (n *Notifier) Meta() (title, group string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.title, n.group
-}
-
-// SetPaused records whether syncing is paused (shown to agents and on screen).
-func (n *Notifier) SetPaused(p bool) {
-	if n == nil {
-		return
-	}
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if n.paused != p && n.ln != nil {
-		if p {
-			n.record("stop", "GitHub fetching paused: still connected, rules not checked")
-		} else {
-			n.record("agent", "syncing resumed")
-		}
-	}
-	n.paused = p
 }
 
 // boardLabel is "Title (owner/number)", or just owner/number before the title is known.
@@ -303,7 +284,7 @@ func (n *Notifier) do(req request) response {
 		return response{OK: true, Board: n.board, Title: n.title, Rule: rule}
 	case "list":
 		return response{OK: true, Board: n.board, Title: n.title, Rules: n.rules, Queued: len(n.queue), Sent: n.sent,
-			Waiting: n.waiter != nil, Paused: n.paused}
+			Waiting: n.waiter != nil}
 	case "remove":
 		for i, r := range n.rules {
 			if r.ID == req.ID {
@@ -462,7 +443,6 @@ type linkStatus struct {
 	Queued   int
 	Sent     int
 	Waiting  bool
-	Paused   bool
 }
 
 func (n *Notifier) Status() linkStatus {
@@ -472,7 +452,7 @@ func (n *Notifier) Status() linkStatus {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return linkStatus{Active: n.ln != nil, Conflict: n.conflict, Rules: len(n.rules),
-		Queued: len(n.queue), Sent: n.sent, Waiting: n.waiter != nil, Paused: n.paused}
+		Queued: len(n.queue), Sent: n.sent, Waiting: n.waiter != nil}
 }
 
 // LinkSnapshot is everything the AI link screen shows about one watcher.

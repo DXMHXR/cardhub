@@ -17,7 +17,6 @@ type Hub struct {
 	mu      sync.Mutex
 	ws      map[string]*Notifier // by "owner/number"
 	screen  string               // the project on screen
-	paused  bool
 	changed func(added bool)
 }
 
@@ -37,7 +36,7 @@ func (h *Hub) ensure(owner string, number int) *Notifier {
 		return n
 	}
 	n := NewNotifier(h.changed)
-	n.hub, n.owner, n.number, n.paused = h, owner, number, h.paused
+	n.hub, n.owner, n.number = h, owner, number
 	n.Serve(owner, number)
 	h.ws[key] = n
 	if n.changed != nil {
@@ -171,23 +170,9 @@ func (h *Hub) StopAll(reason string) {
 	}
 }
 
-// SetPaused pauses or resumes every watcher's rule checks.
-func (h *Hub) SetPaused(p bool) {
-	if h == nil {
-		return
-	}
-	h.mu.Lock()
-	h.paused = p
-	h.mu.Unlock()
-	for _, n := range h.All() {
-		n.SetPaused(p)
-	}
-}
-
 // hubStatus totals the watchers for the footer and dialogs.
 type hubStatus struct {
 	Boards, Rules, Queued, Sent, Waiting int
-	Paused                               bool
 	Conflict                             string // the on-screen project is watched by another cardhub
 }
 
@@ -196,9 +181,6 @@ func (h *Hub) Status() hubStatus {
 	if h == nil {
 		return st
 	}
-	h.mu.Lock()
-	st.Paused = h.paused
-	h.mu.Unlock()
 	scr := h.Screen()
 	for _, n := range h.All() {
 		s := n.Status()

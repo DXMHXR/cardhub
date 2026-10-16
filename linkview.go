@@ -89,13 +89,8 @@ func (m model) linkWatchers(snaps []LinkSnapshot, w int) string {
 		lines = append(lines, ftLabel.Render("No watchers running. ")+
 			dim.Render(`Open a project, or let an agent run cardhub notify add --board "<project name>".`))
 	}
-	if st.Paused {
-		accent = lvYellow
-		lines = append(lines, fg(lvYellow).Bold(true).Render("❚❚ GitHub fetching paused")+
-			dim.Render(": watchers stay connected, but rules aren't checked until Space resumes."))
-	}
 	if st.Boards > 0 {
-		lines = append(lines, dim.Render("Switching project doesn't stop a watcher. ")+ftKey.Render("X")+dim.Render(" stops one."))
+		lines = append(lines, dim.Render("Switching project or pausing the board doesn't stop a watcher. ")+ftKey.Render("X")+dim.Render(" stops one."))
 	}
 	return boxRows([]footBox{{title: fmt.Sprintf("Watchers (%d)", st.Boards), accent: accent, lines: lines}}, w)
 }

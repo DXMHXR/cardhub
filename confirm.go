@@ -27,8 +27,7 @@ func (m model) confirmKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y", "Y", "enter":
 		switch kind {
 		case confirmPauseSync:
-			m.paused = true
-			m.hub.SetPaused(true)
+			m.paused = true // only the board: AI watchers keep checking and reporting
 		case confirmQuitApp:
 			return m, tea.Quit
 		case confirmStopWatcher:
@@ -47,15 +46,11 @@ func (m model) confirmDialog() string {
 	case confirmPauseSync:
 		accent = yellow
 		lines = []string{
-			bold.Foreground(accent).Render("❚❚ Pause GitHub fetching?"), "",
-			ftLabel.Render("GitHub fetching stops (board refreshes and AI rule checks) until you press Space again. ") +
+			bold.Foreground(accent).Render("❚❚ Pause board refresh?"), "",
+			ftLabel.Render("The board stops refreshing from GitHub until you press Space again. ") +
 				dim.Render("R, scrolling and switching still fetch once."),
 			"",
-			ftLabel.Render("AI watchers stay connected: ") + dim.Render("agents can still add rules and wait, and queued reports are still delivered."),
-		}
-		if agent {
-			lines = append(lines, "", fg(accent).Render("! ")+
-				ftLabel.Render("AI agents are using cardhub's watchers: no new cards are found for them while paused."))
+			ftLabel.Render("AI watchers keep running: ") + dim.Render("agents keep getting reports as usual."),
 		}
 	case confirmQuitApp:
 		accent = red
