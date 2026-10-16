@@ -115,7 +115,13 @@ func (m model) columnBox(ci, w int) string {
 	}
 	body := strings.Join(cards, "\n\n")
 	if c.total == 0 {
-		body = m.emptyState(ci, c, inner, sel)
+		// an empty column has no scroll line: centre the scene in everything
+		// between the title rule and the bottom border
+		if m.settings.Pets {
+			body = m.emptyState(ci, c, inner, boxInnerH-2, sel)
+		} else {
+			body = noTask(inner, boxInnerH-2) // the default
+		}
 	}
 
 	// scroll indicator: ▲ hidden above · position · ▼ hidden below
@@ -135,7 +141,11 @@ func (m model) columnBox(ci, w int) string {
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, head, rule, body)
-	content = lipgloss.NewStyle().Height(boxInnerH-1).MaxHeight(boxInnerH-1).Render(content) + "\n" + scroll
+	if c.total == 0 {
+		content = lipgloss.NewStyle().Height(boxInnerH).MaxHeight(boxInnerH).Render(content)
+	} else {
+		content = lipgloss.NewStyle().Height(boxInnerH-1).MaxHeight(boxInnerH-1).Render(content) + "\n" + scroll
+	}
 
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

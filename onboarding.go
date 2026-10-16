@@ -66,14 +66,14 @@ func check(mark, title string, detail ...string) {
 
 // runDoctor returns the process exit code: 0 when cardhub can run.
 func runDoctor() int {
-	fmt.Println(bold.Render("cardhub doctor") + hint.Render(" — checking what cardhub needs to run"))
+	fmt.Println(bold.Render("CardHub doctor") + hint.Render(" — checking what CardHub needs to run"))
 	fmt.Println()
 
 	if _, err := exec.LookPath("gh"); err == nil {
-		check(okMark, "GitHub CLI installed", "optional: cardhub only uses it to read your login token")
+		check(okMark, "GitHub CLI installed", "optional: CardHub only uses it to read your login token")
 	} else {
 		check(hint.Render("·"), "GitHub CLI not installed (optional)",
-			"cardhub works without it if GITHUB_TOKEN is set. To use it: https://cli.github.com")
+			"CardHub works without it if GITHUB_TOKEN is set. To use it: https://cli.github.com")
 	}
 
 	c, err := NewClient()

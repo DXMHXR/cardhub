@@ -54,10 +54,10 @@ func (m model) confirmDialog() string {
 		}
 	case confirmQuitApp:
 		accent = red
-		lines = []string{bold.Foreground(accent).Render("Quit cardhub?")}
+		lines = []string{bold.Foreground(accent).Render("Quit CardHub?")}
 		if agent {
 			lines = append(lines, "", fg(yellow).Render("! ")+
-				ftLabel.Render("AI agents are using cardhub's watchers. Quitting stops them all: waiting agents are told and get no more reports."))
+				ftLabel.Render("AI agents are using CardHub's watchers. Quitting stops them all: waiting agents are told and get no more reports."))
 		}
 	case confirmStopWatcher:
 		accent = red

@@ -157,7 +157,7 @@ func (n *Notifier) serveAt(path, board string) {
 	defer n.mu.Unlock()
 	n.conflict = ""
 	if alive(path) {
-		n.conflict = "another cardhub is already watching " + board + " for AI agents"
+		n.conflict = "another CardHub is already watching " + board + " for AI agents"
 		return
 	}
 	_ = os.MkdirAll(filepath.Dir(path), 0o700)
@@ -254,7 +254,7 @@ func writeResp(conn net.Conn, resp response) error {
 func (n *Notifier) do(req request) response {
 	if req.Op == "watch" { // ask this cardhub to host a watcher for another project
 		if n.hub == nil {
-			return response{Error: "this cardhub can't host other watchers"}
+			return response{Error: "this CardHub can't host other watchers"}
 		}
 		if err := n.hub.Watch(req.Owner, req.Number); err != nil {
 			return response{Error: err.Error()}
@@ -321,7 +321,7 @@ func (n *Notifier) wait(conn net.Conn, r *bufio.Reader) {
 	}
 	if n.waiter != nil {
 		n.mu.Unlock()
-		writeResp(conn, response{Error: "another agent is already waiting on this cardhub"})
+		writeResp(conn, response{Error: "another agent is already waiting on this CardHub"})
 		return
 	}
 	ch := make(chan response, 1)
@@ -506,4 +506,4 @@ func alive(path string) bool {
 	return true
 }
 
-var errNotOpen = errors.New("cardhub isn't open")
+var errNotOpen = errors.New("CardHub isn't open")

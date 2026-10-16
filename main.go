@@ -11,7 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-const usage = `cardhub — live terminal view of a GitHub Projects (v2) board
+const usage = `CardHub — live terminal view of a GitHub Projects (v2) board
 
 Usage:
   cardhub                        reopen the last board, or pick one from a list
@@ -113,7 +113,7 @@ func main() {
 		m.hub.Show(owner, number) // the AI link: cardhub notify / events
 	}
 	_, err = p.Run()
-	m.hub.StopAll("cardhub quit") // waiting agents hear the watchers stopped
+	m.hub.StopAll("CardHub quit") // waiting agents hear the watchers stopped
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -144,5 +145,64 @@ func TestMatchProject(t *testing.T) {
 		if _, err := matchProject(refs, name); err == nil {
 			t.Errorf("matchProject(%q) should fail", name)
 		}
+	}
+}
+
+// The fish stays inside its bowl: the glass (columns 2 and 19) is never drawn over.
+func TestFishStaysInBowl(t *testing.T) {
+	for step := 0; step < 60; step++ {
+		for _, md := range []mood{{}, {awake: true, since: 9}} {
+			p := scenes[3](step, md)
+			for y := 4; y < 12; y++ {
+				if p[y][2] != 'a' || p[y][19] != 'a' {
+					t.Fatalf("step %d mood %+v: glass at row %d is %q/%q", step, md, y, p[y][2], p[y][19])
+				}
+			}
+		}
+	}
+}
+
+// TestScenes plays every empty-column scene for a while (go test -run
+// TestScenes -v shows a few steps of each as pixel codes) and checks every
+// pixel uses a known palette code.
+func TestScenes(t *testing.T) {
+	known := palette("BLUE", true)
+	for i, sc := range scenes {
+		var shots []string
+		for step := 0; step < 60; step++ {
+			md := mood{awake: step >= 30, since: step - 30} // idle, then woken up
+			p := sc(step, md)
+			var rows []string
+			for _, row := range p {
+				var b strings.Builder
+				for _, px := range row {
+					if px == 0 {
+						b.WriteByte('.')
+						continue
+					}
+					if _, ok := known[px]; !ok {
+						t.Fatalf("scene %d step %d: unknown pixel code %q", i, step, px)
+					}
+					b.WriteByte(px)
+				}
+				rows = append(rows, b.String())
+			}
+			if step%7 == 0 && step < 21 {
+				shots = append(shots, fmt.Sprintf("step %d:\n%s", step, strings.Join(rows, "\n")))
+			}
+		}
+		t.Logf("scene %d\n%s", i, strings.Join(shots, "\n"))
+	}
+}
+
+// Empty-column animations are off unless the user turned them on.
+func TestPetsOffByDefault(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if loadSettings().Pets {
+		t.Fatal("with no settings file, animations should be off")
+	}
+	saveSettings(settings{Pets: true})
+	if !loadSettings().Pets {
+		t.Fatal("turning animations on should be saved")
 	}
 }

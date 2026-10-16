@@ -180,7 +180,7 @@ func (m model) linkConnect(w int) string {
 	lines := []string{
 		step("1", "cardhub notify add '<filter>'", "report cards matching a GitHub project filter"),
 		step("2", "cardhub events --wait --json", "in the background: wakes the agent on each report"),
-		dim.Render("   Quitting cardhub stops the watchers, and a waiting agent is told (exit code 3)."),
+		dim.Render("   Quitting CardHub stops the watchers, and a waiting agent is told (exit code 3)."),
 		"",
 		ftLabel.Render("Or paste this sample prompt into your agent ") + dim.Render("(") + ftKey.Render("C") + dim.Render(" copies it):"),
 	}
@@ -322,7 +322,7 @@ func splitFilter(f string) []string {
 func samplePrompt() string {
 	return "Run `cardhub notify add 'is:open label:bug'`, then run `cardhub events --wait --json` in the background. " +
 		"When it returns, handle each reported card, oldest first, then run `events --wait` again. " +
-		"If it exits with code 3 or 4, cardhub was closed: stop and say so."
+		"If it exits with code 3 or 4, CardHub was closed: stop and say so."
 }
 
 // wrapWords wraps text at spaces only, so flags like --json never split.

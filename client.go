@@ -24,7 +24,7 @@ const (
 	exitNotOpen = 4 // no cardhub is open for the board
 )
 
-const agentUsage = `AI link: let an AI agent hear about card changes from the cardhub you have open.
+const agentUsage = `AI link: let an AI agent hear about card changes from the CardHub you have open.
 
   cardhub notify add '<filter>'   report cards matching a GitHub project filter,
                                   e.g. 'is:open label:bug' (each card once).
@@ -155,7 +155,7 @@ func runEvents(args []string) int {
 	}
 	resp, err := call(path, request{Op: "events", Wait: f.wait})
 	if errors.Is(err, errWatcherGone) {
-		fmt.Fprintln(os.Stderr, "watcher stopped: cardhub exited")
+		fmt.Fprintln(os.Stderr, "watcher stopped: CardHub exited")
 		return exitStopped
 	}
 	if err != nil {
@@ -180,7 +180,7 @@ func runEvents(args []string) int {
 	return exitOK
 }
 
-var errWatcherGone = errors.New("cardhub closed the connection")
+var errWatcherGone = errors.New("CardHub closed the connection")
 
 // call sends one request and reads one response line.
 func call(path string, req request) (response, error) {
@@ -249,7 +249,7 @@ func findBoard(board string) (string, int) {
 		if owner, number, _, err := ParseTarget([]string{board}); err == nil {
 			p := socketPath(owner, number)
 			if !alive(p) {
-				fmt.Fprintf(os.Stderr, "cardhub isn't open on %s/%d. Open it with: cardhub %s %d\n", owner, number, owner, number)
+				fmt.Fprintf(os.Stderr, "CardHub isn't open on %s/%d. Open it with: cardhub %s %d\n", owner, number, owner, number)
 				return "", exitNotOpen
 			}
 			return p, exitOK
@@ -260,14 +260,14 @@ func findBoard(board string) (string, int) {
 				fmt.Fprintln(os.Stderr, "error: --board:", err)
 				return "", exitUsage
 			}
-			fmt.Fprintf(os.Stderr, "cardhub isn't open on %q. Open it with: cardhub %s\n", board, shellQuote(board))
+			fmt.Fprintf(os.Stderr, "CardHub isn't open on %q. Open it with: cardhub %s\n", board, shellQuote(board))
 			return "", exitNotOpen
 		}
 		return p, exitOK
 	}
 	switch len(open) {
 	case 0:
-		fmt.Fprintln(os.Stderr, "cardhub isn't open. Open it with: cardhub \"<project name>\"")
+		fmt.Fprintln(os.Stderr, "CardHub isn't open. Open it with: cardhub \"<project name>\"")
 		return "", exitNotOpen
 	case 1:
 		for _, ob := range open {
@@ -293,7 +293,7 @@ func findOrOpen(f agentFlags) (string, int) {
 		}
 		last, ok := loadLast()
 		if !ok {
-			fmt.Fprintln(os.Stderr, "cardhub isn't open and there's no last board: pass --board <owner/number>")
+			fmt.Fprintln(os.Stderr, "CardHub isn't open and there's no last board: pass --board <owner/number>")
 			return "", exitNotOpen
 		}
 		board = fmt.Sprintf("%s/%d", last.Owner, last.Number)
@@ -320,14 +320,14 @@ func findOrOpen(f agentFlags) (string, int) {
 		}
 		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 			if alive(p) {
-				fmt.Fprintf(os.Stderr, "the open cardhub now also watches %s/%d\n", owner, number)
+				fmt.Fprintf(os.Stderr, "the open CardHub now also watches %s/%d\n", owner, number)
 				return p, exitOK
 			}
 		}
 		break
 	}
 	if f.noOpen {
-		fmt.Fprintf(os.Stderr, "cardhub isn't open on %s/%d (and --no-open was given)\n", owner, number)
+		fmt.Fprintf(os.Stderr, "CardHub isn't open on %s/%d (and --no-open was given)\n", owner, number)
 		return "", exitNotOpen
 	}
 	exe, err := os.Executable()
@@ -336,16 +336,16 @@ func findOrOpen(f agentFlags) (string, int) {
 	}
 	where, err := openInTerminal(fmt.Sprintf("%s %s %d", shellQuote(exe), shellQuote(owner), number))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "couldn't open cardhub:", err)
+		fmt.Fprintln(os.Stderr, "couldn't open CardHub:", err)
 		return "", exitNotOpen
 	}
-	fmt.Fprintf(os.Stderr, "opened cardhub on %s/%d in %s\n", owner, number, where)
+	fmt.Fprintf(os.Stderr, "opened CardHub on %s/%d in %s\n", owner, number, where)
 	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(300 * time.Millisecond) {
 		if alive(p) {
 			return p, exitOK
 		}
 	}
-	fmt.Fprintln(os.Stderr, "cardhub didn't start within 30s; check the new terminal for an error (try: cardhub doctor)")
+	fmt.Fprintln(os.Stderr, "CardHub didn't start within 30s; check the new terminal for an error (try: cardhub doctor)")
 	return "", exitNotOpen
 }
 
@@ -357,7 +357,7 @@ func printJSON(v any) int {
 
 func fail(err error) int {
 	if errors.Is(err, errNotOpen) {
-		fmt.Fprintln(os.Stderr, "cardhub isn't open")
+		fmt.Fprintln(os.Stderr, "CardHub isn't open")
 		return exitNotOpen
 	}
 	fmt.Fprintln(os.Stderr, "error:", err)

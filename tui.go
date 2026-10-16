@@ -95,11 +95,16 @@ type model struct {
 	history    []map[string]int // column counts per poll, oldest first
 	changedAt  map[string]time.Time
 
-	view     view
-	col, row int            // selected column, and the cursor within it
-	cursors  map[string]int // remembered cursor per column name
-	offsets  map[string]int // first visible card per column name
-	frame    int            // animation frame for the flow connectors
+	view           view
+	col, row       int            // selected column, and the cursor within it
+	cursors        map[string]int // remembered cursor per column name
+	offsets        map[string]int // first visible card per column name
+	settings       settings       // saved between runs (Settings menu, S)
+	settingsOpen   bool
+	settingsCursor int
+
+	frame      int // animation frame for the flow connectors and pets
+	focusFrame int // frame the selected column got the cursor (pets wake up)
 
 	filter    textinput.Model
 	filtering bool
@@ -112,7 +117,7 @@ type model struct {
 	recheck      bool        // a rule was added while a check was running
 	copied       string      // confirmation after copying the sample prompt
 	paused       bool        // Space: the board stops refreshing (AI watchers keep running)
-	confirm      confirmKind // an open "Pause syncing?" / "Quit cardhub?" / "Stop watching?" dialog
+	confirm      confirmKind // an open "Pause syncing?" / "Quit CardHub?" / "Stop watching?" dialog
 	stopTarget   string      // the watcher (owner/number) the stop dialog is about
 	query        string      // "/" search text the current board was fetched with
 	picker       picker
@@ -136,8 +141,9 @@ func newModel(c *Client, owner string, number int, interval time.Duration, group
 	m := model{
 		client: c, owner: owner, number: number, interval: interval,
 		groupField: group, viewArg: viewArg, viewIdx: -1, changedAt: map[string]time.Time{},
-		cursors: map[string]int{}, offsets: map[string]int{},
-		filter: ti, spin: sp,
+		cursors: map[string]int{}, offsets: map[string]int{}, focusFrame: -1000,
+		settings: loadSettings(),
+		filter:   ti, spin: sp,
 	}
 	if owner == "" { // nothing to show yet: open on the project picker
 		m.picker = picker{open: true, kind: pickProject, loading: true}
@@ -488,6 +494,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.confirm != confirmNone {
 			return m.confirmKey(msg)
 		}
+		if m.settingsOpen {
+			return m.settingsKey(msg)
+		}
 		if m.picker.open {
 			return m.pickerKey(msg)
 		}
@@ -595,7 +604,10 @@ func (m *model) moveCol(i int) {
 	if len(m.columns) == 0 {
 		return
 	}
-	m.col = clamp(i, 0, len(m.columns)-1)
+	if c := clamp(i, 0, len(m.columns)-1); c != m.col {
+		m.focusFrame = m.frame // an empty column's pet is startled awake
+		m.col = c
+	}
 	m.row = m.cursors[m.columns[m.col].name]
 	m.clampCursor()
 }
@@ -698,6 +710,9 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "p":
 		return m, m.openPicker(pickProject)
+	case "s", "S":
+		m.settingsOpen, m.settingsCursor = true, 0
+		return m, nil
 	case "x", "X": // stop a watcher (AI link screen)
 		if m.view == viewLink && m.hub.Status().Boards > 0 {
 			return m, m.openPicker(pickWatcher)
@@ -831,6 +846,9 @@ func (m model) View() string {
 	if m.confirm != confirmNone {
 		return overlay(screen, m.confirmDialog(), m.width, m.height)
 	}
+	if m.settingsOpen {
+		return overlay(screen, m.settingsDialog(), m.width, m.height)
+	}
 	if m.picker.open { // dialog floats over the dimmed current screen
 		return overlay(screen, m.pickerBox(m.height-4), m.width, m.height)
 	}
@@ -838,7 +856,7 @@ func (m model) View() string {
 }
 
 func (m model) headerView() string {
-	title := "cardhub"
+	title := "CardHub"
 	if m.owner != "" {
 		title = fmt.Sprintf("%s/%d", m.owner, m.number)
 	}
@@ -1060,7 +1078,7 @@ func (m model) footerView() string {
 	other := map[view]string{viewBoard: "Stats", viewStats: "AI link", viewLink: "Board"}[m.view]
 	keys := []string{
 		pair("←↓↑→", "Move"), pair("⏎", "Open"), pair("P", "Project"), pair("V", "View"),
-		pair("/", "Filter"), pair("R", "Sync"), pair("Space", pick(m.paused, "Resume", "Pause")),
+		pair("/", "Filter"), pair("R", "Sync"), pair("Space", pick(m.paused, "Resume", "Pause")), pair("S", "Settings"),
 		pair("+/-", "Interval"), pair("Tab", other), pair("Q", "Quit"),
 	}
 	if m.view == viewLink && m.hub.Status().Boards > 0 {

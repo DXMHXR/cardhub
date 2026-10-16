@@ -132,11 +132,12 @@ A board can be named by its **project title** (`"Roadmap"`, case doesn't matter,
 | `Space` | pause (asks first) or resume the board's refreshing (the header shows `❚❚ PAUSED`). Only the board on screen stops: AI watchers keep checking and reporting. `R`, scrolling and switching still fetch once |
 | `+` / `-` | refresh faster or slower |
 | `Tab` / `1` `2` `3` | switch between the Board, Stats and AI link screens |
+| `S` | settings: turn the empty-column animations on or off. They're off by default (empty columns show "No Task" on a grid); the choice is saved between runs |
 | `Q` | quit (asks first, and warns if an AI agent is using the board). `Ctrl+C` quits straight away |
 
 ### Screens
 
-- **Board:** columns follow the view's grouping (Status by default) in a responsive grid. Columns sit side by side while they fit and wrap onto new rows when they don't. Each column shows 3 cards and scrolls with ↑/↓. Animated dotted connectors show the workflow direction. When a card changes column, the connectors it crossed light up for 90 seconds: yellow for forward moves, orange `◀` for moves back, with a `×N` count. A yellow ● marks recently changed cards.
+- **Board:** columns follow the view's grouping (Status by default) in a responsive grid. Columns sit side by side while they fit and wrap onto new rows when they don't. Each column shows 3 cards and scrolls with ↑/↓. Animated dotted connectors show the workflow direction. When a card changes column, the connectors it crossed light up for 90 seconds: yellow for forward moves, orange `◀` for moves back, with a `×N` count. A yellow ● marks recently changed cards. Empty columns show "No Task"; turn on animations in Settings (`S`) for a little pet scene in each one, which wakes up when the cursor lands on its column.
 - **Stats:** a bar per column with a trend sparkline, plus breakdowns by state and assignee.
 - **AI link:** every watcher (which project is on screen, rules, reports sent and queued, whether an agent is waiting), totals, the rules agents have set with how many cards match each, and one activity timeline for all watchers. `X` stops a watcher. Until an agent connects, it also shows the commands to run and a sample prompt for this board; press `C` to copy the prompt to the clipboard.
 

@@ -82,7 +82,7 @@ type Client struct {
 // ErrNoToken is returned when no GitHub token can be found anywhere.
 var ErrNoToken = errors.New(`no GitHub token found.
 
-cardhub reads your token from (first match wins):
+CardHub reads your token from (first match wins):
   1. the GITHUB_TOKEN environment variable
   2. the GH_TOKEN environment variable
   3. the GitHub CLI: ` + "`gh auth token`" + `
@@ -132,7 +132,7 @@ func (c *Client) graphql(ctx context.Context, query string, vars map[string]any,
 	case http.StatusUnauthorized:
 		return fmt.Errorf("GitHub rejected your token from %s (expired or revoked). Run `gh auth login`, or set a new GITHUB_TOKEN", c.source)
 	case http.StatusForbidden, http.StatusTooManyRequests:
-		return errors.New("GitHub is rate-limiting this token. cardhub will retry; wait for the hourly reset")
+		return errors.New("GitHub is rate-limiting this token. CardHub will retry; wait for the hourly reset")
 	default:
 		return fmt.Errorf("github: HTTP %s", resp.Status)
 	}

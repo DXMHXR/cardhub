@@ -156,7 +156,7 @@ func (h *Hub) StopWatcher(board string) {
 	delete(h.ws, board)
 	h.mu.Unlock()
 	if n != nil {
-		n.Stop("stopped from cardhub")
+		n.Stop("stopped from CardHub")
 	}
 	if h.changed != nil {
 		go h.changed(false)

@@ -30,7 +30,7 @@ func openInTerminal(cmdline string) (string, error) {
 		}
 	}
 	if os.Getenv("TMUX") != "" {
-		return "a new tmux window", exec.Command("tmux", "new-window", "-d", "-n", "cardhub", cmdline).Run()
+		return "a new tmux window", exec.Command("tmux", "new-window", "-d", "-n", "CardHub", cmdline).Run()
 	}
 	switch runtime.GOOS {
 	case "darwin":
@@ -48,7 +48,7 @@ func openInTerminal(cmdline string) (string, error) {
 		}
 	}
 	return "", errors.New("don't know how to open a terminal here; set CARDHUB_TERMINAL " +
-		`(e.g. CARDHUB_TERMINAL='alacritty -e sh -c {cmd}') or start cardhub yourself`)
+		`(e.g. CARDHUB_TERMINAL='alacritty -e sh -c {cmd}') or start CardHub yourself`)
 }
 
 func cmuxBin() string {
@@ -60,7 +60,7 @@ func cmuxBin() string {
 
 var surfaceRef = regexp.MustCompile(`surface:\S+`)
 
-// openCmux adds a background tab named "cardhub" to the caller's workspace.
+// openCmux adds a background tab named "CardHub" to the caller's workspace.
 func openCmux(bin, workspace, cmdline string) (string, error) {
 	out, err := exec.Command(bin, "new-surface", "--type", "terminal", "--workspace", workspace,
 		"--command", cmdline, "--focus", "false").CombinedOutput()
@@ -68,7 +68,7 @@ func openCmux(bin, workspace, cmdline string) (string, error) {
 		return "", fmt.Errorf("cmux new-surface: %s", strings.TrimSpace(string(out)))
 	}
 	if ref := surfaceRef.FindString(string(out)); ref != "" {
-		_ = exec.Command(bin, "rename-tab", "--surface", ref, "cardhub").Run()
+		_ = exec.Command(bin, "rename-tab", "--surface", ref, "CardHub").Run()
 	}
 	return "a new cmux tab", nil
 }
