@@ -4,6 +4,16 @@ A live terminal dashboard for **GitHub Projects** boards. CardHub shows your boa
 
 ![CardHub showing the GitHub Public Roadmap board](docs/board.png)
 
+## Why I built this
+
+My team tracks QA bugs on a GitHub Projects board. Two things kept bothering me.
+
+**I wanted to watch the board without living in a browser tab.** I spend my day in the terminal, so I wanted the board right there: always up to date, showing at a glance what's waiting, what's in progress and what just moved, without reloading a web page.
+
+**I wanted AI agents to start working the moment QA files a ticket.** I run an AI agent as an orchestrator: when QA reports a new bug, it hands the ticket to a second agent to triage it, then to implement the fix, then pushes the commit. As the work moves along, the card moves through the board's columns, from in progress to waiting for deploy to ready for test. The weak spot was the trigger. The orchestrator checked for new tickets on a timer every 30 minutes. A new bug could wait half an hour before anyone looked at it, and every check woke the model only to find nothing new, spending tokens on "nothing changed".
+
+CardHub fixes both. It's the board I keep open in a terminal tab, and it's also the watcher my agents listen to. The orchestrator tells CardHub what to look for ("new bugs from QA") and waits for free. CardHub, which is refreshing the board anyway, wakes it within seconds when a matching card appears. When I close CardHub the automation stops too, so I'm always in control. Meanwhile I can watch the agents' work move across the board as it happens.
+
 ## Features
 
 - **Live kanban board.** Columns follow your project's Status (or a view's grouping) in a responsive grid that wraps to fit any terminal 30+ columns wide. Each column shows 3 cards and scrolls.
