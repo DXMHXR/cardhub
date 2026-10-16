@@ -132,3 +132,17 @@ func TestAutoInterval(t *testing.T) {
 		}
 	}
 }
+
+func TestMatchProject(t *testing.T) {
+	refs := []ProjectRef{{"acme", 1, "Roadmap"}, {"acme", 2, "Roadmap Archive"}, {"acme", 3, "Bug Triage"}, {"beta", 1, "Bugs"}}
+	for name, want := range map[string]int{"roadmap": 1, "ROADMAP ARCHIVE": 2, "triage": 3} {
+		if p, err := matchProject(refs, name); err != nil || p.Number != want {
+			t.Errorf("matchProject(%q) = %+v, %v; want #%d", name, p, err, want)
+		}
+	}
+	for _, name := range []string{"bug", "nope"} { // ambiguous, missing
+		if _, err := matchProject(refs, name); err == nil {
+			t.Errorf("matchProject(%q) should fail", name)
+		}
+	}
+}

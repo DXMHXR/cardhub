@@ -35,7 +35,8 @@ const agentUsage = `AI link: let an AI agent hear about card changes from the ca
   cardhub events                  print queued reports now (possibly none)
 
 Flags (any of the above):
-  --board <owner/number|url>      which open board (needed only if several are open)
+  --board <project name>          which board: its title (e.g. "Roadmap"), or owner/number
+                                  or URL. Needed only if several boards are open.
   --json                          JSON output, one report per line
   --no-open                       notify add: fail instead of opening cardhub
 
@@ -96,7 +97,7 @@ func runNotify(args []string) int {
 			return printJSON(resp)
 		}
 		fmt.Printf("rule %d on %s: report cards matching %q (cards matching now are reported once)\n",
-			resp.Rule.ID, resp.Board, resp.Rule.Filter)
+			resp.Rule.ID, boardLabel(resp.Title, resp.Board), resp.Rule.Filter)
 	case "list":
 		path, code := findBoard(f.board)
 		if code != exitOK {
@@ -113,7 +114,7 @@ func runNotify(args []string) int {
 		if resp.Waiting {
 			waiting = "an agent is waiting"
 		}
-		fmt.Printf("%s · %d queued · %d sent · %s\n", resp.Board, resp.Queued, resp.Sent, waiting)
+		fmt.Printf("%s · %d queued · %d sent · %s\n", boardLabel(resp.Title, resp.Board), resp.Queued, resp.Sent, waiting)
 		if len(resp.Rules) == 0 {
 			fmt.Println("no rules yet: cardhub notify add '<filter>'")
 		}
@@ -205,9 +206,12 @@ func call(path string, req request) (response, error) {
 	return resp, nil
 }
 
-// openBoards lists the boards a running cardhub is serving, cleaning up stale sockets.
-func openBoards() map[string]string {
-	out := map[string]string{}
+type openBoard struct{ path, title string }
+
+// openBoards lists the boards a running cardhub is serving (keyed by
+// owner/number), cleaning up stale sockets.
+func openBoards() map[string]openBoard {
+	out := map[string]openBoard{}
 	paths, _ := filepath.Glob(filepath.Join(socketDir(), "*.sock"))
 	for _, p := range paths {
 		resp, err := call(p, request{Op: "ping"})
@@ -215,42 +219,66 @@ func openBoards() map[string]string {
 			_ = os.Remove(p)
 			continue
 		}
-		out[resp.Board] = p
+		out[resp.Board] = openBoard{p, resp.Title}
 	}
 	return out
 }
 
-// findBoard picks the socket for --board, or the only open board.
+// openByName finds an open board by its project title (exact, then a unique partial match).
+func openByName(open map[string]openBoard, name string) (string, error) {
+	var refs []ProjectRef
+	paths := map[string]string{}
+	for board, ob := range open {
+		owner, num, _, _ := ParseTarget([]string{board})
+		refs = append(refs, ProjectRef{owner, num, ob.title})
+		paths[board] = ob.path
+	}
+	p, err := matchProject(refs, name)
+	if err != nil {
+		return "", err
+	}
+	return paths[fmt.Sprintf("%s/%d", p.Owner, p.Number)], nil
+}
+
+// findBoard picks the socket for --board (a project title, owner/number or URL),
+// or the only open board.
 func findBoard(board string) (string, int) {
+	open := openBoards()
 	if board != "" {
-		owner, number, _, err := ParseTarget([]string{board})
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "error: --board:", err)
-			return "", exitUsage
+		if owner, number, _, err := ParseTarget([]string{board}); err == nil {
+			p := socketPath(owner, number)
+			if !alive(p) {
+				fmt.Fprintf(os.Stderr, "cardhub isn't open on %s/%d. Open it with: cardhub %s %d\n", owner, number, owner, number)
+				return "", exitNotOpen
+			}
+			return p, exitOK
 		}
-		p := socketPath(owner, number)
-		if !alive(p) {
-			fmt.Fprintf(os.Stderr, "cardhub isn't open on %s/%d. Open it with: cardhub %s %d\n", owner, number, owner, number)
+		p, err := openByName(open, board)
+		if err != nil {
+			if strings.Contains(err.Error(), "several") { // ambiguous among open boards
+				fmt.Fprintln(os.Stderr, "error: --board:", err)
+				return "", exitUsage
+			}
+			fmt.Fprintf(os.Stderr, "cardhub isn't open on %q. Open it with: cardhub %s\n", board, shellQuote(board))
 			return "", exitNotOpen
 		}
 		return p, exitOK
 	}
-	open := openBoards()
 	switch len(open) {
 	case 0:
-		fmt.Fprintln(os.Stderr, "cardhub isn't open. Open it with: cardhub <owner> <number>")
+		fmt.Fprintln(os.Stderr, "cardhub isn't open. Open it with: cardhub \"<project name>\"")
 		return "", exitNotOpen
 	case 1:
-		for _, p := range open {
-			return p, exitOK
+		for _, ob := range open {
+			return ob.path, exitOK
 		}
 	}
 	var names []string
-	for b := range open {
-		names = append(names, b)
+	for b, ob := range open {
+		names = append(names, boardLabel(ob.title, b))
 	}
 	sort.Strings(names)
-	fmt.Fprintf(os.Stderr, "several boards are open (%s); pick one with --board <owner/number>\n", strings.Join(names, ", "))
+	fmt.Fprintf(os.Stderr, "several boards are open (%s); pick one with --board \"<project name>\"\n", strings.Join(names, ", "))
 	return "", exitUsage
 }
 
@@ -270,9 +298,14 @@ func findOrOpen(f agentFlags) (string, int) {
 		board = fmt.Sprintf("%s/%d", last.Owner, last.Number)
 	}
 	owner, number, _, err := ParseTarget([]string{board})
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error: --board:", err)
-		return "", exitUsage
+	if err != nil { // a project title: an open board by that name, else look it up on GitHub
+		if p, err := openByName(openBoards(), board); err == nil {
+			return p, exitOK
+		}
+		if owner, number, err = resolveProjectName(board); err != nil {
+			fmt.Fprintln(os.Stderr, "error: --board:", err)
+			return "", exitUsage
+		}
 	}
 	p := socketPath(owner, number)
 	if alive(p) {

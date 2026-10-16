@@ -31,7 +31,7 @@ func (m model) linkView(h int) string {
 			agent = lipgloss.NewStyle().Foreground(green).Render("●") + " " + ftLabel.Render("an agent is waiting (events --wait)")
 		}
 		link = append(link,
-			pair("Board", snap.Board)+"   "+agent,
+			pair("Board", boardLabel(snap.Title, snap.Board))+"   "+agent,
 			pair("Reports", fmt.Sprintf("%d sent · %d queued", snap.Sent, snap.Queued)),
 			pair("Socket", trunc(snap.Path, inner-9)))
 	}

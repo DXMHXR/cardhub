@@ -75,6 +75,7 @@ type response struct {
 	OK      bool          `json:"ok"`
 	Error   string        `json:"error,omitempty"`
 	Board   string        `json:"board,omitempty"`
+	Title   string        `json:"title,omitempty"` // project title, e.g. "Roadmap"
 	Rule    *Rule         `json:"rule,omitempty"`
 	Rules   []*Rule       `json:"rules,omitempty"`
 	Events  []NotifyEvent `json:"events,omitempty"`
@@ -89,6 +90,7 @@ type response struct {
 type Notifier struct {
 	mu       sync.Mutex
 	board    string // "owner/number" being served, "" when idle
+	title    string // the project's title, once known
 	path     string
 	ln       net.Listener
 	rules    []*Rule
@@ -156,6 +158,25 @@ func (n *Notifier) serveAt(path, board string) {
 	go n.accept(ln)
 }
 
+// SetTitle records the project's title once its metadata has loaded, so agents
+// can name the board by title (--board "Roadmap") instead of owner/number.
+func (n *Notifier) SetTitle(title string) {
+	if n == nil {
+		return
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.title = title
+}
+
+// boardLabel is "Title (owner/number)", or just owner/number before the title is known.
+func boardLabel(title, board string) string {
+	if title == "" {
+		return board
+	}
+	return title + " (" + board + ")"
+}
+
 // Stop ends the link: a waiting agent hears "stopped", rules are cleared.
 func (n *Notifier) Stop(reason string) {
 	n.mu.Lock()
@@ -169,7 +190,7 @@ func (n *Notifier) Stop(reason string) {
 		n.ln.Close()
 		_ = os.Remove(n.path)
 	}
-	n.ln, n.path, n.board = nil, "", ""
+	n.ln, n.path, n.board, n.title = nil, "", "", ""
 	n.rules, n.queue, n.sent = nil, nil, 0
 }
 
@@ -214,14 +235,14 @@ func (n *Notifier) do(req request) response {
 	defer n.mu.Unlock()
 	switch req.Op {
 	case "ping":
-		return response{OK: true, Board: n.board}
+		return response{OK: true, Board: n.board, Title: n.title}
 	case "add":
 		if req.Filter == "" {
 			return response{Error: "empty filter"}
 		}
 		for _, r := range n.rules {
 			if r.Filter == req.Filter {
-				return response{OK: true, Board: n.board, Rule: r} // already watching this
+				return response{OK: true, Board: n.board, Title: n.title, Rule: r} // already watching this
 			}
 		}
 		n.nextID++
@@ -229,9 +250,9 @@ func (n *Notifier) do(req request) response {
 		n.rules = append(n.rules, rule)
 		n.record("rule", "rule %d added: %s", rule.ID, rule.Filter)
 		go n.notify(true) // check it now: cards matching already are reported once
-		return response{OK: true, Board: n.board, Rule: rule}
+		return response{OK: true, Board: n.board, Title: n.title, Rule: rule}
 	case "list":
-		return response{OK: true, Board: n.board, Rules: n.rules, Queued: len(n.queue), Sent: n.sent, Waiting: n.waiter != nil}
+		return response{OK: true, Board: n.board, Title: n.title, Rules: n.rules, Queued: len(n.queue), Sent: n.sent, Waiting: n.waiter != nil}
 	case "remove":
 		for i, r := range n.rules {
 			if r.ID == req.ID {
@@ -393,9 +414,9 @@ func (n *Notifier) Status() linkStatus {
 // LinkSnapshot is everything the AI link screen shows.
 type LinkSnapshot struct {
 	linkStatus
-	Board, Path string
-	Rules       []RuleView
-	Log         []LinkLog // newest first
+	Board, Title, Path string
+	Rules              []RuleView
+	Log                []LinkLog // newest first
 }
 
 type RuleView struct {
@@ -412,7 +433,7 @@ func (n *Notifier) Snapshot() LinkSnapshot {
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	snap := LinkSnapshot{linkStatus: st, Board: n.board, Path: n.path}
+	snap := LinkSnapshot{linkStatus: st, Board: n.board, Title: n.title, Path: n.path}
 	for _, r := range n.rules {
 		snap.Rules = append(snap.Rules, RuleView{r.ID, r.Filter, r.Matches, len(r.reported)})
 	}

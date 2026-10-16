@@ -381,6 +381,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastErr = msg.err
 		if msg.meta != nil {
 			m.meta, m.views, m.viewIdx = msg.meta, msg.meta.Views, msg.viewIdx
+			m.notifier.SetTitle(msg.meta.Title)
 		}
 		if msg.err == nil {
 			if m.resetDiff || msg.group != m.groupField {

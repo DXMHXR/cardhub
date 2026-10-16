@@ -107,6 +107,7 @@ Anything missing is marked ✘ or !, with the exact command that fixes it.
 
 ```sh
 cardhub                                              # last board, or pick from a list
+cardhub "Roadmap"                                    # open a board by its project name
 cardhub https://github.com/orgs/my-org/projects/3   # open a board by its URL
 cardhub my-org 3                                     # same, by owner and number
 cardhub https://github.com/orgs/my-org/projects/3/views/6   # open a saved view
@@ -116,7 +117,7 @@ cardhub doctor                                       # check your setup
 cardhub notify add 'is:open label:bug'      # AI link (see below)
 ```
 
-The project URL is the address of the board in your browser.
+A board can be named by its **project title** (`"Roadmap"`, case doesn't matter, and a unique part such as `road` works too), by its URL (the address of the board in your browser), or by owner and number. If a name matches several projects, cardhub lists them so you can be more specific.
 
 ### Keys
 
@@ -150,7 +151,7 @@ cardhub events --wait --json                      # block until there are report
 - **`notify add '<filter>'`** takes any GitHub project filter. Each matching card is reported once, cards that already match are reported straight away, and a card that stops matching and later matches again is reported again. If cardhub isn't open, this opens it: a new **cmux** tab in the agent's workspace, a new **tmux** window, or a new iTerm2 / Terminal / Ghostty / WezTerm window (Linux: your terminal emulator). Set `CARDHUB_TERMINAL='<cmd> {cmd}'` to choose another, or pass `--no-open`.
 - **`events --wait`** blocks until there are reports, prints them (`--json`: one card per line with `number`, `title`, `status`, `labels`, `url` and the matching `rule`), and exits. Reports that arrive while no agent waits are queued for the next call. `events` without `--wait` returns the queue immediately.
 - **`notify list`** shows rules, match counts and whether an agent is waiting. **`notify remove <id>`** stops a rule.
-- **Several boards open?** Add `--board <owner/number>`. Otherwise commands use the only open board, and `notify add` falls back to your last board.
+- **Several boards open?** Add `--board "<project name>"` (or owner/number). Otherwise commands use the only open board, and `notify add` falls back to your last board.
 
 Exit codes: `0` ok · `1` error · `2` usage · `3` watcher stopped (cardhub quit) · `4` cardhub isn't open.
 

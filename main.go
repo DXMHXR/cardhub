@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -14,6 +15,7 @@ const usage = `cardhub — live terminal view of a GitHub Projects (v2) board
 
 Usage:
   cardhub                        reopen the last board, or pick one from a list
+  cardhub "<project name>"       e.g. cardhub "Roadmap" (a unique part of the name works too)
   cardhub <project-url>          e.g. https://github.com/orgs/my-org/projects/3
   cardhub <owner> <number>       e.g. cardhub my-org 3
   cardhub doctor                 check your setup (token, scopes, projects)
@@ -72,10 +74,11 @@ func main() {
 	} else {
 		var err error
 		if owner, number, urlView, err = ParseTarget(args); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			fmt.Fprintln(os.Stderr)
-			flag.Usage()
-			os.Exit(2)
+			// not a URL or owner/number: treat the words as a project title
+			if owner, number, err = resolveProjectName(strings.Join(args, " ")); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(2)
+			}
 		}
 	}
 	if *viewArg == "" && urlView > 0 {
