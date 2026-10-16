@@ -51,6 +51,7 @@ type LinkLog struct {
 	At   time.Time
 	Kind string // rule | queued | sent | agent | stop
 	Text string
+	Card *NotifyEvent // queued entries: the card, so the screen can style it
 }
 
 const maxLinkLog = 200
@@ -91,6 +92,7 @@ type Notifier struct {
 	mu       sync.Mutex
 	board    string // "owner/number" being served, "" when idle
 	title    string // the project's title, once known
+	since    time.Time
 	path     string
 	ln       net.Listener
 	rules    []*Rule
@@ -153,7 +155,7 @@ func (n *Notifier) serveAt(path, board string) {
 		n.conflict = "AI link unavailable: " + err.Error()
 		return
 	}
-	n.ln, n.path, n.board = ln, path, board
+	n.ln, n.path, n.board, n.since = ln, path, board, time.Now()
 	n.record("agent", "listening for AI agents on %s", board)
 	go n.accept(ln)
 }
@@ -381,8 +383,10 @@ func (n *Notifier) Apply(matches map[int][]Item, groupField string, at time.Time
 		r.reported = now
 	}
 	sort.SliceStable(fresh, func(i, j int) bool { return fresh[i].Number < fresh[j].Number })
-	for _, e := range fresh {
+	for i := range fresh {
+		e := fresh[i]
 		n.record("queued", "#%d [%s] %s · rule %d", e.Number, e.Status, e.Title, e.Rule)
+		n.log[len(n.log)-1].Card = &e
 	}
 	n.queue = append(n.queue, fresh...)
 	if n.waiter != nil && len(n.queue) > 0 {
@@ -415,6 +419,7 @@ func (n *Notifier) Status() linkStatus {
 type LinkSnapshot struct {
 	linkStatus
 	Board, Title, Path string
+	Since              time.Time
 	Rules              []RuleView
 	Log                []LinkLog // newest first
 }
@@ -433,7 +438,7 @@ func (n *Notifier) Snapshot() LinkSnapshot {
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	snap := LinkSnapshot{linkStatus: st, Board: n.board, Title: n.title, Path: n.path}
+	snap := LinkSnapshot{linkStatus: st, Board: n.board, Title: n.title, Path: n.path, Since: n.since}
 	for _, r := range n.rules {
 		snap.Rules = append(snap.Rules, RuleView{r.ID, r.Filter, r.Matches, len(r.reported)})
 	}
