@@ -113,6 +113,7 @@ cardhub https://github.com/orgs/my-org/projects/3/views/6   # open a saved view
 cardhub -view Bug my-org 3                           # saved view by name or number
 cardhub -once my-org 3                               # print column counts and exit
 cardhub doctor                                       # check your setup
+cardhub notify add 'is:open label:bug'      # AI link (see below)
 ```
 
 The project URL is the address of the board in your browser.
@@ -128,13 +129,38 @@ The project URL is the address of the board in your browser.
 | `/` | search, using free text or GitHub filters like `label:bug assignee:@me is:open` (`esc` clears) |
 | `R` | sync now |
 | `+` / `-` | refresh faster or slower |
-| `Tab` / `1` `2` | switch between the Board and Stats screens |
+| `Tab` / `1` `2` `3` | switch between the Board, Stats and AI link screens |
 | `Q` | quit |
 
 ### Screens
 
 - **Board:** columns follow the view's grouping (Status by default) in a responsive grid. Columns sit side by side while they fit and wrap onto new rows when they don't. Each column shows 3 cards and scrolls with ↑/↓. Animated dotted connectors show the workflow direction. When a card changes column, the connectors it crossed light up for 90 seconds: yellow for forward moves, orange `◀` for moves back, with a `×N` count. A yellow ● marks recently changed cards.
 - **Stats:** a bar per column with a trend sparkline, plus breakdowns by state and assignee.
+- **AI link:** the link's state (board, socket, whether an agent is waiting, reports sent and queued), the rules agents have set with how many cards match each, and an activity log of rules added, cards queued, reports sent and agents connecting or leaving. Until an agent connects, it also shows the commands to run and a sample prompt for this board; press `C` to copy the prompt to the clipboard.
+
+## AI link: let an AI agent react to card changes
+
+The cardhub you have open can tell an AI agent (Claude Code, or any agent that can run commands) when cards change. The agent doesn't run its own polling loop. It asks cardhub to report specific changes and waits, using no model tokens until something happens. Quitting cardhub stops the watcher, and a waiting agent is told so.
+
+```sh
+cardhub notify add 'is:open label:bug'   # report cards matching this filter
+cardhub events --wait --json                      # block until there are reports
+```
+
+- **`notify add '<filter>'`** takes any GitHub project filter. Each matching card is reported once, cards that already match are reported straight away, and a card that stops matching and later matches again is reported again. If cardhub isn't open, this opens it: a new **cmux** tab in the agent's workspace, a new **tmux** window, or a new iTerm2 / Terminal / Ghostty / WezTerm window (Linux: your terminal emulator). Set `CARDHUB_TERMINAL='<cmd> {cmd}'` to choose another, or pass `--no-open`.
+- **`events --wait`** blocks until there are reports, prints them (`--json`: one card per line with `number`, `title`, `status`, `labels`, `url` and the matching `rule`), and exits. Reports that arrive while no agent waits are queued for the next call. `events` without `--wait` returns the queue immediately.
+- **`notify list`** shows rules, match counts and whether an agent is waiting. **`notify remove <id>`** stops a rule.
+- **Several boards open?** Add `--board <owner/number>`. Otherwise commands use the only open board, and `notify add` falls back to your last board.
+
+Exit codes: `0` ok · `1` error · `2` usage · `3` watcher stopped (cardhub quit) · `4` cardhub isn't open.
+
+**How the right agent gets the message:** cardhub never picks a terminal. The agent session that runs `events --wait` in the background owns that process, and the agent's harness (Claude Code, for one) wakes that session when the command exits. Only one agent can wait per open cardhub. The footer's AI link box shows its state, for example `1 rule · 3 sent · ● agent waiting`, and screen `3` shows the details.
+
+Rules are checked on every sync against the whole project, whatever view or search is on screen. They cost about 1 point per sync for all rules together, and cover the first 50 matches per rule. cardhub stays read-only: agents change cards with their own tools (for example `gh project item-edit`).
+
+**Example agent instructions:**
+
+> Run `cardhub notify add 'is:open label:bug' --board my-org/3`, then run `cardhub events --wait --json` in the background. When it returns, handle each reported card, oldest first, then run `events --wait` again. If it exits with code 3, cardhub was closed: stop and say so.
 
 ## Troubleshooting
 
@@ -147,6 +173,7 @@ The project URL is the address of the board in your browser.
 | cards show `(no access)` | add the `repo` scope: `gh auth refresh --scopes repo` |
 | an org's projects don't appear under `P` | add the `read:org` scope, or open the board by URL |
 | `cardhub: command not found` | add Go's bin folder to PATH (see Install) |
+| `cardhub isn't open` (exit 4) from `events` | open the board (`cardhub <owner> <number>`), or let `cardhub notify add` open it |
 
 `cardhub doctor` checks all of these at once.
 

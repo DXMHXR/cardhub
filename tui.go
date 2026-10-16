@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,6 +22,8 @@ type view int
 const (
 	viewBoard view = iota
 	viewStats
+	viewLink // the AI link screen
+	numViews
 )
 
 const (
@@ -38,6 +41,22 @@ type boardMsg struct {
 	meta    *ProjectMeta // set when project metadata was (re)loaded with this fetch
 	viewIdx int
 	group   string // field the snapshot is grouped by
+}
+
+type clearCopiedMsg struct{}
+
+// linkMsg: the AI link changed (agent connected, rule added…); re-render, and
+// check rules right away when one was just added.
+type linkMsg struct{ added bool }
+
+// rulesMsg carries the cards currently matching each AI rule.
+type rulesMsg struct {
+	matches map[int][]Item
+	rl      RateLimit
+	err     error
+	at      time.Time
+	owner   string
+	number  int
 }
 
 // filterMsg fires after the user pauses typing in the "/" search, so the
@@ -82,8 +101,13 @@ type model struct {
 	filtering bool
 	filterSeq int // debounce counter for the "/" search
 	saved     lastState
-	query     string // "/" search text the current board was fetched with
-	picker    picker
+
+	notifier     *Notifier // AI link; nil when not running interactively
+	ruleChecking bool
+	recheck      bool   // a rule was added while a check was running
+	copied       string // confirmation after copying the sample prompt
+	query        string // "/" search text the current board was fetched with
+	picker       picker
 
 	fetching  bool
 	fetchSeq  int
@@ -211,6 +235,25 @@ func (m model) cardLimits() map[string]int {
 	return lim
 }
 
+// checkRules evaluates the AI link's rules against the whole project.
+func (m *model) checkRules() tea.Cmd {
+	if m.notifier == nil || m.owner == "" || m.ruleChecking {
+		return nil
+	}
+	filters := m.notifier.Filters()
+	if len(filters) == 0 {
+		return nil
+	}
+	m.ruleChecking = true
+	c, owner, num := m.client, m.owner, m.number
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		matches, rl, err := c.FetchMatches(ctx, owner, num, filters)
+		return rulesMsg{matches: matches, rl: rl, err: err, at: time.Now(), owner: owner, number: num}
+	}
+}
+
 // rememberBoard saves the open project and view so plain `cardhub` reopens them.
 func (m *model) rememberBoard() {
 	s := lastState{Owner: m.owner, Number: m.number}
@@ -240,7 +283,8 @@ func (m *model) applySearch() tea.Cmd {
 // the stats screen loads every card, the board goes back to the cheap windowed
 // sync (and its shorter auto interval) straight away.
 func (m *model) statsNeedsAll() tea.Cmd {
-	if m.board == nil || m.board.Windowed == (m.view == viewBoard) {
+	// only the stats screen needs every card; the board and AI link screens use the cheap sync
+	if m.board == nil || m.board.Windowed == (m.view != viewStats) {
 		return nil
 	}
 	return m.fetchCmd()
@@ -347,7 +391,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rememberBoard()
 		}
 		m.nextFetch = time.Now().Add(m.effectiveInterval())
-		return m, m.loadMore() // the cursor may have scrolled further meanwhile
+		// the cursor may have scrolled further meanwhile; AI rules ride along each sync
+		return m, tea.Batch(m.loadMore(), m.checkRules())
+
+	case clearCopiedMsg:
+		m.copied = ""
+		return m, nil
+
+	case linkMsg:
+		if msg.added {
+			if m.ruleChecking {
+				m.recheck = true
+				return m, nil
+			}
+			return m, m.checkRules()
+		}
+		return m, nil
+
+	case rulesMsg:
+		m.ruleChecking = false
+		if msg.owner == m.owner && msg.number == m.number {
+			if msg.err != nil {
+				m.lastErr = msg.err
+			} else {
+				m.notifier.Apply(msg.matches, m.groupField, msg.at)
+				if m.board != nil {
+					m.board.RateLimit = msg.rl
+				}
+			}
+		}
+		if m.recheck {
+			m.recheck = false
+			return m, m.checkRules()
+		}
+		return m, nil
 
 	case filterMsg:
 		if msg.seq != m.filterSeq {
@@ -508,13 +585,20 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "tab", "shift+tab":
-		m.view = (m.view + 1) % 2
+		if k.String() == "tab" {
+			m.view = (m.view + 1) % numViews
+		} else {
+			m.view = (m.view + numViews - 1) % numViews
+		}
 		return m, m.statsNeedsAll()
 	case "1":
 		m.view = viewBoard
 		return m, m.statsNeedsAll()
 	case "2":
 		m.view = viewStats
+		return m, m.statsNeedsAll()
+	case "3":
+		m.view = viewLink
 		return m, m.statsNeedsAll()
 	case "left", "h":
 		m.moveCol(m.col - 1)
@@ -547,6 +631,17 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.loadMore()
 	case "p":
 		return m, m.openPicker(pickProject)
+	case "c", "C":
+		if m.view == viewLink {
+			if m.notifier.Status().Active {
+				if err := clipboard.WriteAll(samplePrompt()); err != nil {
+					m.copied = "couldn't copy: " + err.Error()
+				} else {
+					m.copied = "sample prompt copied to the clipboard"
+				}
+				return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return clearCopiedMsg{} })
+			}
+		}
 	case "/":
 		m.filtering = true
 		m.view = viewBoard
@@ -657,6 +752,8 @@ func (m model) View() string {
 		body = m.boardView(bodyH)
 	case m.view == viewStats:
 		body = m.statsView(bodyH)
+	case m.view == viewLink:
+		body = m.linkView(bodyH)
 	}
 	body = lipgloss.NewStyle().Height(bodyH).MaxHeight(bodyH).Render(body)
 	screen := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
@@ -691,7 +788,7 @@ func (m model) headerView() string {
 		name, strings.Repeat(" ", max(1, m.width-lipgloss.Width(name)-lipgloss.Width(live))), live)
 
 	// line 2: screen tabs, grouping and item count on the right
-	tabs := []string{"1 Board", "2 Stats"}
+	tabs := []string{"1 Board", "2 Stats", "3 AI link"}
 	for i := range tabs {
 		if view(i) == m.view && !m.picker.open {
 			tabs[i] = tabOn.Render(tabs[i])
@@ -741,34 +838,31 @@ func pair(key, label string) string {
 	return ftKey.Render(key) + dim.Render(":") + " " + ftLabel.Render(label)
 }
 
-// flow lays entries out left to right on as few lines as fit the width,
-// spreading them evenly across those lines rather than leaving a short tail.
-func flow(entries []string, width int, gap string) string {
-	for n := 1; n <= len(entries); n++ {
-		per := (len(entries) + n - 1) / n
-		var lines []string
-		fits := true
-		for i := 0; i < len(entries); i += per {
-			line := " " + strings.Join(entries[i:min(i+per, len(entries))], gap)
-			if lipgloss.Width(line) > width {
-				fits = false
-				break
-			}
+// flow lays entries out left to right, filling each line up to width before
+// wrapping to the next.
+func flow(entries []string, width int, gap string) []string {
+	var lines []string
+	line := ""
+	for _, e := range entries {
+		switch {
+		case line == "":
+			line = e
+		case lipgloss.Width(line)+lipgloss.Width(gap)+lipgloss.Width(e) <= width:
+			line += gap + e
+		default:
 			lines = append(lines, line)
-		}
-		if fits {
-			return strings.Join(lines, "\n")
+			line = e
 		}
 	}
-	return " " + strings.Join(entries, "\n ")
+	return append(lines, line)
 }
 
 // apiMeter shows how much of the hourly API budget is used, like a context-window
 // meter: a bar that fills (green → yellow → red) as the budget is spent.
-func apiMeter(rl RateLimit) string {
+func apiMeter(rl RateLimit) (string, lipgloss.Color) {
 	const w = 10
 	if rl.Limit <= 0 {
-		return pair("API", "–")
+		return ftLabel.Render("–"), lipgloss.Color("#8b949e")
 	}
 	used := clamp(rl.Limit-rl.Remaining, 0, rl.Limit)
 	frac := float64(used) / float64(rl.Limit)
@@ -786,15 +880,16 @@ func apiMeter(rl RateLimit) string {
 	bar := lipgloss.NewStyle().Foreground(color).Render(strings.Repeat("█", fill)) +
 		ftRule.Render(strings.Repeat("░", w-fill))
 	pct := lipgloss.NewStyle().Foreground(color).Render(fmt.Sprintf("%d%%", int(frac*100+0.5)))
-	detail := ftLabel.Render(fmt.Sprintf("%d/%d left", rl.Remaining, rl.Limit))
+	// the bar and % already show the share; the count says how much is left
+	detail := ftLabel.Render(fmt.Sprintf("%d left", rl.Remaining))
 	if rl.Remaining < lowRateLimit {
-		detail = errStyle.Render(fmt.Sprintf("%d/%d left (throttled)", rl.Remaining, rl.Limit))
+		detail = errStyle.Render(fmt.Sprintf("%d left (throttled)", rl.Remaining))
 	}
 	reset := ""
 	if left := time.Until(rl.ResetAt); left > 0 {
 		reset = dim.Render(" · ") + ftLabel.Render("resets ") + ftKey.Render(untilLabel(left))
 	}
-	return ftKey.Render("API") + dim.Render(":") + " " + bar + " " + pct + " " + detail + reset
+	return bar + " " + pct + dim.Render(" · ") + detail + reset, color
 }
 
 // untilLabel formats a countdown compactly: 45s, 37m, 1h05m.
@@ -809,6 +904,36 @@ func untilLabel(d time.Duration) string {
 	}
 }
 
+// linkBody describes the AI link for its footer box while the socket is open:
+// "ready · 0 rules · ○ no agent waiting", later "1 rule · 3 sent · ● agent waiting".
+// The accent turns green while an agent is listening.
+func (m model) linkBody() (string, lipgloss.Color, bool) {
+	st := m.notifier.Status()
+	grey, green := lipgloss.Color("#8b949e"), lipgloss.Color("#3fb950")
+	if st.Conflict != "" && m.owner != "" {
+		return ftLabel.Render(st.Conflict), lipgloss.Color("#d29922"), true
+	}
+	if !st.Active {
+		return "", grey, false
+	}
+	rules := fmt.Sprintf("%d rule", st.Rules)
+	if st.Rules != 1 {
+		rules += "s"
+	}
+	parts := []string{rules, fmt.Sprintf("%d sent", st.Sent)}
+	if st.Rules == 0 && st.Sent == 0 { // socket open, no agent has set anything up yet
+		parts = []string{"ready", rules}
+	}
+	if st.Queued > 0 {
+		parts = append(parts, fmt.Sprintf("%d queued", st.Queued))
+	}
+	agent, accent := ftRule.Render("○")+" "+ftLabel.Render("no agent waiting"), grey
+	if st.Waiting {
+		agent, accent = lipgloss.NewStyle().Foreground(green).Render("●")+" "+ftLabel.Render("agent waiting"), green
+	}
+	return ftLabel.Render(strings.Join(parts, " · ")) + dim.Render(" · ") + agent, accent, true
+}
+
 // everyLabel shows the sync interval, marking it "auto" when it was stretched.
 func everyLabel(base, eff time.Duration) string {
 	if eff > base {
@@ -818,37 +943,47 @@ func everyLabel(base, eff time.Duration) string {
 }
 
 func (m model) footerView() string {
-	// status: sync state, freshness, cadence and API budget
-	var status []string
+	var boxes []footBox
+
+	// Sync: state, freshness, cadence (and the last error, if any)
+	var sync []string
 	switch {
 	case m.fetching:
-		status = append(status, m.spin.View()+" "+ftLabel.Render("Syncing…"))
+		sync = append(sync, m.spin.View()+" "+ftLabel.Render("Syncing…"))
 	case !m.nextFetch.IsZero():
-		status = append(status, pair("Next sync", fmt.Sprintf("%ds", max(0, int(time.Until(m.nextFetch).Seconds())))))
+		sync = append(sync, pair("Next", fmt.Sprintf("%ds", max(0, int(time.Until(m.nextFetch).Seconds())))))
 	}
 	if m.board != nil {
-		status = append(status,
-			pair("Updated", ago(m.board.FetchedAt)+" ago"),
+		sync = append(sync, pair("Updated", ago(m.board.FetchedAt)+" ago"),
 			pair("Every", everyLabel(m.interval, m.effectiveInterval())))
 	}
-	if m.lastErr != nil && m.board != nil {
-		status = append(status, errStyle.Render(trunc(m.lastErr.Error(), 60)))
+	if len(sync) > 0 {
+		lines := []string{strings.Join(sync, "  ")}
+		if m.lastErr != nil && m.board != nil {
+			lines = append(lines, errStyle.Render(m.lastErr.Error()))
+		}
+		boxes = append(boxes, footBox{title: "Sync", accent: lipgloss.Color("#58a6ff"), lines: lines})
+	}
+	if m.board != nil {
+		body, accent := apiMeter(m.board.RateLimit)
+		boxes = append(boxes, footBox{title: "API budget", accent: accent, lines: []string{body}})
+	}
+	if body, accent, ok := m.linkBody(); ok {
+		boxes = append(boxes, footBox{title: "AI link", accent: accent, lines: []string{body}})
 	}
 
-	other := "Stats" // tab toggles between the two screens; name the one it goes to
-	if m.view == viewStats {
-		other = "Board"
-	}
+	// Tab cycles the screens; name the one it goes to
+	other := map[view]string{viewBoard: "Stats", viewStats: "AI link", viewLink: "Board"}[m.view]
 	keys := []string{
 		pair("←↓↑→", "Move"), pair("⏎", "Open"), pair("P", "Project"), pair("V", "View"),
 		pair("/", "Filter"), pair("R", "Sync"), pair("+/-", "Interval"), pair("Tab", other), pair("Q", "Quit"),
 	}
-	rule := ftRule.Render(strings.Repeat("─", m.width))
-	info := flow(status, m.width, "   ")
-	if m.board != nil { // the API meter gets its own line under the sync info
-		info += "\n " + apiMeter(m.board.RateLimit)
+	if m.view == viewLink && m.notifier.Status().Active {
+		keys = append(keys[:len(keys)-1], pair("C", "Copy prompt"), keys[len(keys)-1])
 	}
-	return "\n" + rule + "\n" + info + "\n" + rule + "\n" + flow(keys, m.width, "   ")
+	shortcuts := footBox{title: "Shortcuts", accent: lipgloss.Color("#8b949e"), lines: flow(keys, m.width-4, "   ")}
+
+	return "\n" + boxRows(boxes, m.width) + "\n" + boxRows([]footBox{shortcuts}, m.width)
 }
 
 func (m model) cardView(it Item, w int, sel bool) string {

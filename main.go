@@ -17,6 +17,8 @@ Usage:
   cardhub <project-url>          e.g. https://github.com/orgs/my-org/projects/3
   cardhub <owner> <number>       e.g. cardhub my-org 3
   cardhub doctor                 check your setup (token, scopes, projects)
+  cardhub notify | events        AI link: let an AI agent hear about card changes
+                                 (cardhub notify -h for details)
 
 Examples:
   cardhub -view Bug my-org 3     open a saved view by name or number
@@ -35,6 +37,15 @@ func main() {
 	viewArg := flag.String("view", "", "saved project view to show, by name or number (default: all items)")
 	once := flag.Bool("once", false, "print a one-shot summary and exit (no UI)")
 	flag.Usage = func() { fmt.Fprint(os.Stderr, usage); flag.PrintDefaults() }
+	// AI link commands have their own flags
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "notify":
+			os.Exit(runNotify(os.Args[2:]))
+		case "events":
+			os.Exit(runEvents(os.Args[2:]))
+		}
+	}
 	flag.Parse()
 
 	args := flag.Args()
@@ -91,8 +102,16 @@ func main() {
 		return
 	}
 
-	p := tea.NewProgram(newModel(client, owner, number, *interval, *group, *viewArg), tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
+	m := newModel(client, owner, number, *interval, *group, *viewArg)
+	var p *tea.Program
+	m.notifier = NewNotifier(func(added bool) { p.Send(linkMsg{added}) })
+	p = tea.NewProgram(m, tea.WithAltScreen())
+	if owner != "" {
+		m.notifier.Serve(owner, number) // the AI link: cardhub notify / events
+	}
+	_, err = p.Run()
+	m.notifier.Stop("cardhub quit") // a waiting agent hears the watcher stopped
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}

@@ -177,6 +177,10 @@ func (m *model) switchProject(p ProjectRef) tea.Cmd {
 		return nil
 	}
 	m.owner, m.number = p.Owner, p.Number
+	if m.notifier != nil { // the AI link follows the board on screen
+		m.notifier.Serve(p.Owner, p.Number)
+		m.ruleChecking, m.recheck = false, false
+	}
 	m.board, m.meta, m.views, m.viewIdx, m.viewArg = nil, nil, nil, -1, ""
 	m.groupField, m.columns, m.history, m.moves = "", nil, nil, nil
 	m.changedAt = map[string]time.Time{}

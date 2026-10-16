@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -398,6 +399,60 @@ func (c *Client) FetchColumns(ctx context.Context, owner string, number int, met
 		}
 	}
 	return b, nil
+}
+
+// FetchMatches checks the AI link's rules: one request with an aliased items
+// query per rule (first 50 matches each), about 1 point however many rules.
+// It ignores the view and search on screen: rules see the whole project.
+func (c *Client) FetchMatches(ctx context.Context, owner string, number int, filters map[int]string) (map[int][]Item, RateLimit, error) {
+	ids := make([]int, 0, len(filters))
+	for id := range filters {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	var q strings.Builder
+	q.WriteString("query($owner: String!, $number: Int!")
+	vars := map[string]any{"owner": owner, "number": number}
+	for _, id := range ids {
+		fmt.Fprintf(&q, ", $r%d: String", id)
+		vars[fmt.Sprintf("r%d", id)] = filters[id]
+	}
+	q.WriteString(") {\n  rateLimit { cost remaining limit resetAt }\n  repositoryOwner(login: $owner) { ... on ProjectV2Owner { projectV2(number: $number) {\n")
+	for _, id := range ids {
+		fmt.Fprintf(&q, "    r%d: items(first: 50, query: $r%d) { nodes {%s\n    } }\n", id, id, itemFields)
+	}
+	q.WriteString("  } } }\n}")
+
+	var r struct {
+		RateLimit rateLimitResp `json:"rateLimit"`
+		Owner     *struct {
+			Project map[string]json.RawMessage `json:"projectV2"`
+		} `json:"repositoryOwner"`
+	}
+	if err := c.graphql(ctx, q.String(), vars, &r); err != nil {
+		return nil, RateLimit{}, err
+	}
+	if r.Owner == nil || r.Owner.Project == nil {
+		return nil, RateLimit{}, notFound(owner, number)
+	}
+	out := map[int][]Item{}
+	for _, id := range ids {
+		var conn struct {
+			Nodes []itemNode `json:"nodes"`
+		}
+		if raw, ok := r.Owner.Project[fmt.Sprintf("r%d", id)]; ok {
+			if err := json.Unmarshal(raw, &conn); err != nil {
+				return nil, RateLimit{}, err
+			}
+		}
+		out[id] = []Item{}
+		for _, n := range conn.Nodes {
+			if !n.IsArchived {
+				out[id] = append(out[id], n.item())
+			}
+		}
+	}
+	return out, RateLimit{r.RateLimit.Remaining, r.RateLimit.Limit, r.RateLimit.ResetAt}, nil
 }
 
 // ProjectView is a saved view of the project (the tabs in GitHub's project UI).
