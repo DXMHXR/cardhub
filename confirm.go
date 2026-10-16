@@ -15,6 +15,7 @@ const (
 	confirmNone confirmKind = iota
 	confirmPauseSync
 	confirmQuitApp
+	confirmStopWatcher // stop m.stopTarget's watcher
 )
 
 func (m model) confirmKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -27,9 +28,11 @@ func (m model) confirmKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch kind {
 		case confirmPauseSync:
 			m.paused = true
-			m.notifier.SetPaused(true)
+			m.hub.SetPaused(true)
 		case confirmQuitApp:
 			return m, tea.Quit
+		case confirmStopWatcher:
+			m.hub.StopWatcher(m.stopTarget)
 		}
 	}
 	return m, nil
@@ -37,31 +40,47 @@ func (m model) confirmKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m model) confirmDialog() string {
 	yellow, red := lipgloss.Color("#d29922"), lipgloss.Color("#f85149")
-	st := m.notifier.Status()
-	agent := st.Waiting || st.Rules > 0
+	agent := m.hub.InUse()
 	var accent lipgloss.Color
 	var lines []string
 	switch m.confirm {
 	case confirmPauseSync:
 		accent = yellow
 		lines = []string{
-			bold.Foreground(accent).Render("❚❚ Pause syncing?"), "",
-			ftLabel.Render("Automatic refreshes and AI rule checks stop until you press Space again. ") +
+			bold.Foreground(accent).Render("❚❚ Pause GitHub fetching?"), "",
+			ftLabel.Render("GitHub fetching stops (board refreshes and AI rule checks) until you press Space again. ") +
 				dim.Render("R, scrolling and switching still fetch once."),
+			"",
+			ftLabel.Render("AI watchers stay connected: ") + dim.Render("agents can still add rules and wait, and queued reports are still delivered."),
 		}
 		if agent {
 			lines = append(lines, "", fg(accent).Render("! ")+
-				ftLabel.Render("An AI agent is using this board: it gets no new reports while paused."))
+				ftLabel.Render("AI agents are using cardhub's watchers: no new cards are found for them while paused."))
 		}
 	case confirmQuitApp:
 		accent = red
 		lines = []string{bold.Foreground(accent).Render("Quit cardhub?")}
 		if agent {
 			lines = append(lines, "", fg(yellow).Render("! ")+
-				ftLabel.Render("An AI agent is using this board. Quitting stops the watcher: the agent is told and gets no more reports."))
+				ftLabel.Render("AI agents are using cardhub's watchers. Quitting stops them all: waiting agents are told and get no more reports."))
+		}
+	case confirmStopWatcher:
+		accent = red
+		name := m.stopTarget
+		var waiting bool
+		for _, s := range m.hub.Snapshots() {
+			if s.Board == m.stopTarget {
+				name, waiting = boardLabel(s.Title, s.Board), s.Waiting
+			}
+		}
+		lines = []string{bold.Foreground(accent).Render("Stop watching " + name + "?"), "",
+			ftLabel.Render("Its rules are dropped and AI agents get no more reports for this project.")}
+		if waiting {
+			lines = append(lines, "", fg(yellow).Render("! ")+
+				ftLabel.Render("An agent is waiting on it: it's told the watcher stopped (exit code 3)."))
 		}
 	}
-	verb := map[confirmKind]string{confirmPauseSync: " pause", confirmQuitApp: " quit"}[m.confirm]
+	verb := map[confirmKind]string{confirmPauseSync: " pause", confirmQuitApp: " quit", confirmStopWatcher: " stop"}[m.confirm]
 	lines = append(lines, "",
 		ftKey.Render("Y")+dim.Render(" / ")+ftKey.Render("Enter")+ftLabel.Render(verb)+dim.Render("    ")+
 			ftKey.Render("N")+dim.Render(" / ")+ftKey.Render("Esc")+ftLabel.Render(" cancel"))

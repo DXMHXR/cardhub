@@ -107,13 +107,13 @@ func main() {
 
 	m := newModel(client, owner, number, *interval, *group, *viewArg)
 	var p *tea.Program
-	m.notifier = NewNotifier(func(added bool) { p.Send(linkMsg{added}) })
+	m.hub = NewHub(func(added bool) { p.Send(linkMsg{added}) })
 	p = tea.NewProgram(m, tea.WithAltScreen())
 	if owner != "" {
-		m.notifier.Serve(owner, number) // the AI link: cardhub notify / events
+		m.hub.Show(owner, number) // the AI link: cardhub notify / events
 	}
 	_, err = p.Run()
-	m.notifier.Stop("cardhub quit") // a waiting agent hears the watcher stopped
+	m.hub.StopAll("cardhub quit") // waiting agents hear the watchers stopped
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)

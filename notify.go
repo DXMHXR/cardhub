@@ -14,14 +14,16 @@ import (
 	"time"
 )
 
-// The AI link. A running (visible) cardhub is the one watcher for its board.
-// AI agents talk to it through `cardhub notify …` and `cardhub events …`, which
-// connect to a unix socket the TUI serves while it is open:
+// The AI link. A running cardhub hosts one watcher per project that AI agents
+// use (see Hub): the project on screen, plus any an agent asked for. Watchers
+// are independent of the screen: switching project doesn't stop them. Agents
+// talk to a watcher through `cardhub notify …` and `cardhub events …`, which
+// connect to the unix socket it serves:
 //
 //	notify add <filter>  → a rule; cards matching it are reported once each
 //	events [--wait]      → returns queued reports (waiting for the next if asked)
 //
-// Quitting cardhub stops the watcher: a waiting `events --wait` is told so.
+// Quitting cardhub stops every watcher: a waiting `events --wait` is told so.
 
 // Rule is one AI-defined trigger: report cards matching Filter (GitHub
 // project filter syntax), each card once while it keeps matching.
@@ -66,8 +68,10 @@ func (n *Notifier) record(kind, format string, args ...any) {
 
 // request/response are the JSON lines exchanged over the socket.
 type request struct {
-	Op     string `json:"op"` // ping | add | list | remove | events
+	Op     string `json:"op"` // ping | add | list | remove | events | watch
 	Filter string `json:"filter,omitempty"`
+	Owner  string `json:"owner,omitempty"`  // watch: the project to start watching
+	Number int    `json:"number,omitempty"` // watch
 	ID     int    `json:"id,omitempty"`
 	Wait   bool   `json:"wait,omitempty"`
 }
@@ -87,23 +91,29 @@ type response struct {
 	Paused  bool          `json:"paused,omitempty"`  // syncing is paused: no new reports until resumed
 }
 
-// Notifier holds the AI link's state. The TUI evaluates rules on each sync and
-// feeds results in with Apply; socket clients read and change it concurrently.
+// Notifier is the watcher for one project. The TUI evaluates its rules on a
+// timer and feeds results in with Apply; socket clients read and change it
+// concurrently.
 type Notifier struct {
-	mu       sync.Mutex
-	board    string // "owner/number" being served, "" when idle
-	title    string // the project's title, once known
-	since    time.Time
-	paused   bool // the TUI paused syncing: rules aren't checked, nothing new is reported
-	path     string
-	ln       net.Listener
-	rules    []*Rule
-	nextID   int
-	queue    []NotifyEvent
-	sent     int
-	waiter   chan response // the one blocked `events --wait`, if any
-	conflict string        // why this instance couldn't serve its board
-	log      []LinkLog     // recent activity, newest last (for the AI link screen)
+	mu         sync.Mutex
+	hub        *Hub // the cardhub hosting this watcher (nil in tests)
+	owner      string
+	number     int
+	group      string    // field whose value is reported as a card's status
+	lastActive time.Time // last request from an agent (idle watchers are closed)
+	board      string    // "owner/number" being served, "" when idle
+	title      string    // the project's title, once known
+	since      time.Time
+	paused     bool // the TUI paused syncing: rules aren't checked, nothing new is reported
+	path       string
+	ln         net.Listener
+	rules      []*Rule
+	nextID     int
+	queue      []NotifyEvent
+	sent       int
+	waiter     chan response // the one blocked `events --wait`, if any
+	conflict   string        // why this instance couldn't serve its board
+	log        []LinkLog     // recent activity, newest last (for the AI link screen)
 
 	// changed is called (from any goroutine) when the TUI should re-render or
 	// re-check rules; added is true when a rule was just added.
@@ -122,6 +132,9 @@ func (n *Notifier) notify(added bool) {
 
 // socketDir holds one socket per open board.
 func socketDir() string {
+	if d := os.Getenv("CARDHUB_SOCKET_DIR"); d != "" {
+		return d
+	}
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		dir = os.TempDir()
@@ -142,7 +155,6 @@ func (n *Notifier) Serve(owner string, number int) {
 }
 
 func (n *Notifier) serveAt(path, board string) {
-	n.Stop("cardhub switched to another board")
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.conflict = ""
@@ -157,20 +169,27 @@ func (n *Notifier) serveAt(path, board string) {
 		n.conflict = "AI link unavailable: " + err.Error()
 		return
 	}
-	n.ln, n.path, n.board, n.since = ln, path, board, time.Now()
+	n.ln, n.path, n.board, n.since, n.lastActive = ln, path, board, time.Now(), time.Now()
 	n.record("agent", "listening for AI agents on %s", board)
 	go n.accept(ln)
 }
 
-// SetTitle records the project's title once its metadata has loaded, so agents
-// can name the board by title (--board "Roadmap") instead of owner/number.
-func (n *Notifier) SetTitle(title string) {
+// SetMeta records the project's title (so agents can say --board "Roadmap")
+// and the field reported as a card's status, once the project has loaded.
+func (n *Notifier) SetMeta(title, group string) {
 	if n == nil {
 		return
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.title = title
+	n.title, n.group = title, group
+}
+
+// Meta returns what SetMeta stored ("" until the project has loaded).
+func (n *Notifier) Meta() (title, group string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.title, n.group
 }
 
 // SetPaused records whether syncing is paused (shown to agents and on screen).
@@ -182,7 +201,7 @@ func (n *Notifier) SetPaused(p bool) {
 	defer n.mu.Unlock()
 	if n.paused != p && n.ln != nil {
 		if p {
-			n.record("stop", "syncing paused: no new reports until resumed")
+			n.record("stop", "GitHub fetching paused: still connected, rules not checked")
 		} else {
 			n.record("agent", "syncing resumed")
 		}
@@ -252,8 +271,18 @@ func writeResp(conn net.Conn, resp response) error {
 
 // do answers every request except a blocking wait.
 func (n *Notifier) do(req request) response {
+	if req.Op == "watch" { // ask this cardhub to host a watcher for another project
+		if n.hub == nil {
+			return response{Error: "this cardhub can't host other watchers"}
+		}
+		if err := n.hub.Watch(req.Owner, req.Number); err != nil {
+			return response{Error: err.Error()}
+		}
+		return response{OK: true, Board: fmt.Sprintf("%s/%d", req.Owner, req.Number)}
+	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	n.lastActive = time.Now()
 	switch req.Op {
 	case "ping":
 		return response{OK: true, Board: n.board, Title: n.title}
@@ -316,6 +345,7 @@ func (n *Notifier) wait(conn net.Conn, r *bufio.Reader) {
 	}
 	ch := make(chan response, 1)
 	n.waiter = ch
+	n.lastActive = time.Now()
 	n.record("agent", "an agent is waiting (events --wait)")
 	n.mu.Unlock()
 	go n.notify(false)
@@ -336,6 +366,7 @@ func (n *Notifier) wait(conn net.Conn, r *bufio.Reader) {
 		n.mu.Lock()
 		if n.waiter == ch {
 			n.waiter = nil
+			n.lastActive = time.Now()
 			n.record("agent", "the waiting agent left")
 		}
 		select { // events handed over just as the agent left go back in the queue
@@ -415,6 +446,14 @@ func (n *Notifier) Apply(matches map[int][]Item, groupField string, at time.Time
 	}
 }
 
+// idle reports whether nothing uses this watcher: no rules, no waiting agent,
+// nothing queued, and no agent request for at least d.
+func (n *Notifier) idle(d time.Duration) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return len(n.rules) == 0 && n.waiter == nil && len(n.queue) == 0 && time.Since(n.lastActive) >= d
+}
+
 // Status is what the footer shows about the AI link.
 type linkStatus struct {
 	Active   bool // serving a board
@@ -436,9 +475,10 @@ func (n *Notifier) Status() linkStatus {
 		Queued: len(n.queue), Sent: n.sent, Waiting: n.waiter != nil, Paused: n.paused}
 }
 
-// LinkSnapshot is everything the AI link screen shows.
+// LinkSnapshot is everything the AI link screen shows about one watcher.
 type LinkSnapshot struct {
 	linkStatus
+	OnScreen           bool
 	Board, Title, Path string
 	Since              time.Time
 	Rules              []RuleView

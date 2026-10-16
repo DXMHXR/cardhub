@@ -49,14 +49,18 @@ type clearCopiedMsg struct{}
 // check rules right away when one was just added.
 type linkMsg struct{ added bool }
 
-// rulesMsg carries the cards currently matching each AI rule.
+// rulesMsg carries, per watcher, the cards currently matching each AI rule.
 type rulesMsg struct {
-	matches map[int][]Item
-	rl      RateLimit
-	err     error
+	results []ruleResult
 	at      time.Time
-	owner   string
-	number  int
+}
+
+type ruleResult struct {
+	w            *Notifier
+	matches      map[int][]Item
+	title, group string // set when the project's metadata was loaded for this check
+	rl           RateLimit
+	err          error
 }
 
 // filterMsg fires after the user pauses typing in the "/" search, so the
@@ -102,12 +106,14 @@ type model struct {
 	filterSeq int // debounce counter for the "/" search
 	saved     lastState
 
-	notifier     *Notifier // AI link; nil when not running interactively
+	hub          *Hub // AI watchers, one per project; nil when not running interactively
+	nextRules    time.Time
 	ruleChecking bool
 	recheck      bool        // a rule was added while a check was running
 	copied       string      // confirmation after copying the sample prompt
 	paused       bool        // Space: no automatic syncs (or AI rule checks) until resumed
-	confirm      confirmKind // an open "Pause syncing?" / "Quit cardhub?" dialog
+	confirm      confirmKind // an open "Pause syncing?" / "Quit cardhub?" / "Stop watching?" dialog
+	stopTarget   string      // the watcher (owner/number) the stop dialog is about
 	query        string      // "/" search text the current board was fetched with
 	picker       picker
 
@@ -237,22 +243,45 @@ func (m model) cardLimits() map[string]int {
 	return lim
 }
 
-// checkRules evaluates the AI link's rules against the whole project.
+// checkRules evaluates every watcher's rules: one request per watched project
+// (plus, the first time, one to learn an off-screen project's title and status
+// field). It runs on its own timer, independent of the project on screen.
 func (m *model) checkRules() tea.Cmd {
-	if m.notifier == nil || m.owner == "" || m.ruleChecking {
+	if m.hub == nil || m.ruleChecking || m.paused {
 		return nil
 	}
-	filters := m.notifier.Filters()
-	if len(filters) == 0 {
+	type job struct {
+		w        *Notifier
+		filters  map[int]string
+		needMeta bool
+	}
+	var jobs []job
+	for _, w := range m.hub.All() {
+		if f := w.Filters(); len(f) > 0 && w.Status().Active {
+			_, group := w.Meta()
+			jobs = append(jobs, job{w, f, group == ""})
+		}
+	}
+	if len(jobs) == 0 {
 		return nil
 	}
 	m.ruleChecking = true
-	c, owner, num := m.client, m.owner, m.number
+	c := m.client
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		matches, rl, err := c.FetchMatches(ctx, owner, num, filters)
-		return rulesMsg{matches: matches, rl: rl, err: err, at: time.Now(), owner: owner, number: num}
+		msg := rulesMsg{at: time.Now()}
+		for _, j := range jobs {
+			r := ruleResult{w: j.w}
+			if j.needMeta {
+				if meta, err := c.FetchMeta(ctx, j.w.owner, j.w.number); err == nil {
+					r.title, r.group = meta.Title, resolveGroup(meta.Fields, "")
+				}
+			}
+			r.matches, r.rl, r.err = c.FetchMatches(ctx, j.w.owner, j.w.number, j.filters)
+			msg.results = append(msg.results, r)
+		}
+		return msg
 	}
 }
 
@@ -370,8 +399,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.fetchCmd()
 
 	case tickMsg:
+		var cmds []tea.Cmd
 		if !m.paused && !m.fetching && !m.nextFetch.IsZero() && time.Now().After(m.nextFetch) {
-			return m, tea.Batch(tick(), m.fetchCmd())
+			cmds = append(cmds, m.fetchCmd())
+		}
+		if !m.paused && time.Now().After(m.nextRules) { // AI watchers have their own timer
+			cmds = append(cmds, m.checkRules())
+		}
+		m.hub.Prune(idleAfter)
+		if len(cmds) > 0 {
+			return m, tea.Batch(append(cmds, tick())...)
 		}
 		return m, tick()
 
@@ -383,7 +420,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastErr = msg.err
 		if msg.meta != nil {
 			m.meta, m.views, m.viewIdx = msg.meta, msg.meta.Views, msg.viewIdx
-			m.notifier.SetTitle(msg.meta.Title)
+			// reports name the project's main status field, whatever the view groups by
+			m.hub.Get(m.owner, m.number).SetMeta(msg.meta.Title, resolveGroup(msg.meta.Fields, ""))
 		}
 		if msg.err == nil {
 			if m.resetDiff || msg.group != m.groupField {
@@ -394,8 +432,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rememberBoard()
 		}
 		m.nextFetch = time.Now().Add(m.effectiveInterval())
-		// the cursor may have scrolled further meanwhile; AI rules ride along each sync
-		return m, tea.Batch(m.loadMore(), m.checkRules())
+		return m, m.loadMore() // the cursor may have scrolled further meanwhile
 
 	case clearCopiedMsg:
 		m.copied = ""
@@ -413,14 +450,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case rulesMsg:
 		m.ruleChecking = false
-		if msg.owner == m.owner && msg.number == m.number {
-			if msg.err != nil {
-				m.lastErr = msg.err
-			} else {
-				m.notifier.Apply(msg.matches, m.groupField, msg.at)
-				if m.board != nil {
-					m.board.RateLimit = msg.rl
-				}
+		m.nextRules = time.Now().Add(m.effectiveInterval())
+		for _, r := range msg.results {
+			if r.err != nil {
+				m.lastErr = r.err
+				continue
+			}
+			if r.title != "" {
+				r.w.SetMeta(r.title, r.group)
+			}
+			_, group := r.w.Meta()
+			if group == "" {
+				group = "Status"
+			}
+			r.w.Apply(r.matches, group, msg.at)
+			if m.board != nil {
+				m.board.RateLimit = r.rl
 			}
 		}
 		if m.recheck {
@@ -647,16 +692,20 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.paused = false
-		m.notifier.SetPaused(false)
+		m.hub.SetPaused(false)
 		if !m.fetching {
 			return m, m.fetchCmd() // resume with a fresh sync
 		}
 		return m, nil
 	case "p":
 		return m, m.openPicker(pickProject)
+	case "x", "X": // stop a watcher (AI link screen)
+		if m.view == viewLink && m.hub.Status().Boards > 0 {
+			return m, m.openPicker(pickWatcher)
+		}
 	case "c", "C":
 		if m.view == viewLink {
-			if m.notifier.Status().Active {
+			if m.hub.Status().Boards > 0 {
 				if err := clipboard.WriteAll(samplePrompt()); err != nil {
 					m.copied = "couldn't copy: " + err.Error()
 				} else {
@@ -933,25 +982,25 @@ func untilLabel(d time.Duration) string {
 	}
 }
 
-// linkBody describes the AI link for its footer box while the socket is open:
-// "ready · 0 rules · ○ no agent waiting", later "1 rule · 3 sent · ● agent waiting".
+// linkBody describes the AI watchers for the footer box: "ready · 0 rules ·
+// ○ no agent waiting", later "2 boards · 3 rules · 10 sent · ● 1 agent waiting".
 // The accent turns green while an agent is listening.
 func (m model) linkBody() (string, lipgloss.Color, bool) {
-	st := m.notifier.Status()
+	st := m.hub.Status()
 	grey, green := lipgloss.Color("#8b949e"), lipgloss.Color("#3fb950")
-	if st.Conflict != "" && m.owner != "" {
+	if st.Conflict != "" && m.owner != "" && st.Boards == 0 {
 		return ftLabel.Render(st.Conflict), lipgloss.Color("#d29922"), true
 	}
-	if !st.Active {
+	if st.Boards == 0 {
 		return "", grey, false
 	}
-	rules := fmt.Sprintf("%d rule", st.Rules)
-	if st.Rules != 1 {
-		rules += "s"
+	var parts []string
+	if st.Boards > 1 {
+		parts = append(parts, plural(st.Boards, "board"))
 	}
-	parts := []string{rules, fmt.Sprintf("%d sent", st.Sent)}
-	if st.Rules == 0 && st.Sent == 0 { // socket open, no agent has set anything up yet
-		parts = []string{"ready", rules}
+	parts = append(parts, plural(st.Rules, "rule"), fmt.Sprintf("%d sent", st.Sent))
+	if st.Boards == 1 && st.Rules == 0 && st.Sent == 0 { // nothing set up yet
+		parts = []string{"ready", "0 rules"}
 	}
 	if st.Queued > 0 {
 		parts = append(parts, fmt.Sprintf("%d queued", st.Queued))
@@ -960,8 +1009,12 @@ func (m model) linkBody() (string, lipgloss.Color, bool) {
 		parts = append(parts, "paused")
 	}
 	agent, accent := ftRule.Render("○")+" "+ftLabel.Render("no agent waiting"), grey
-	if st.Waiting {
-		agent, accent = lipgloss.NewStyle().Foreground(green).Render("●")+" "+ftLabel.Render("agent waiting"), green
+	if st.Waiting > 0 {
+		label := "agent waiting"
+		if st.Waiting > 1 {
+			label = fmt.Sprintf("%d agents waiting", st.Waiting)
+		}
+		agent, accent = lipgloss.NewStyle().Foreground(green).Render("●")+" "+ftLabel.Render(label), green
 	}
 	return ftLabel.Render(strings.Join(parts, " · ")) + dim.Render(" · ") + agent, accent, true
 }
@@ -1014,8 +1067,8 @@ func (m model) footerView() string {
 		pair("/", "Filter"), pair("R", "Sync"), pair("Space", pick(m.paused, "Resume", "Pause")),
 		pair("+/-", "Interval"), pair("Tab", other), pair("Q", "Quit"),
 	}
-	if m.view == viewLink && m.notifier.Status().Active {
-		keys = append(keys[:len(keys)-1], pair("C", "Copy prompt"), keys[len(keys)-1])
+	if m.view == viewLink && m.hub.Status().Boards > 0 {
+		keys = append(keys[:len(keys)-1], pair("X", "Stop watcher"), pair("C", "Copy prompt"), keys[len(keys)-1])
 	}
 	shortcuts := footBox{title: "Shortcuts", accent: lipgloss.Color("#8b949e"), lines: flow(keys, m.width-4, "   ")}
 

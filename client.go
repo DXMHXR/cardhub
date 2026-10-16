@@ -28,7 +28,8 @@ const agentUsage = `AI link: let an AI agent hear about card changes from the ca
 
   cardhub notify add '<filter>'   report cards matching a GitHub project filter,
                                   e.g. 'is:open label:bug' (each card once).
-                                  Opens cardhub in a new terminal/tab if it isn't open.
+                                  If the project isn't watched yet, the open cardhub
+                                  starts watching it (or cardhub opens in a new tab).
   cardhub notify list             show rules, queued reports, and whether an agent waits
   cardhub notify remove <id>      stop a rule
   cardhub events --wait           block until there are reports, print them, exit
@@ -115,7 +116,7 @@ func runNotify(args []string) int {
 			waiting = "an agent is waiting"
 		}
 		if resp.Paused {
-			waiting += " · syncing paused in cardhub (no new reports until resumed)"
+			waiting += " · GitHub fetching paused in cardhub (still connected; rules not checked until resumed)"
 		}
 		fmt.Printf("%s · %d queued · %d sent · %s\n", boardLabel(resp.Title, resp.Board), resp.Queued, resp.Sent, waiting)
 		if len(resp.Rules) == 0 {
@@ -313,6 +314,20 @@ func findOrOpen(f agentFlags) (string, int) {
 	p := socketPath(owner, number)
 	if alive(p) {
 		return p, exitOK
+	}
+	// a cardhub is already running: ask it to watch this project too
+	for _, ob := range openBoards() {
+		if _, err := call(ob.path, request{Op: "watch", Owner: owner, Number: number}); err != nil {
+			fmt.Fprintln(os.Stderr, "error: couldn't add a watcher:", err)
+			return "", exitError
+		}
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+			if alive(p) {
+				fmt.Fprintf(os.Stderr, "the open cardhub now also watches %s/%d\n", owner, number)
+				return p, exitOK
+			}
+		}
+		break
 	}
 	if f.noOpen {
 		fmt.Fprintf(os.Stderr, "cardhub isn't open on %s/%d (and --no-open was given)\n", owner, number)

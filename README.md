@@ -129,7 +129,7 @@ A board can be named by its **project title** (`"Roadmap"`, case doesn't matter,
 | `V` | switch saved view |
 | `/` | search, using free text or GitHub filters like `label:bug assignee:@me is:open` (`esc` clears) |
 | `R` | sync now |
-| `Space` | pause (asks first) or resume automatic syncing (the header shows `❚❚ PAUSED`). While paused, `R`, scrolling and switching still fetch once, AI rules aren't checked, and agents see the pause in `notify list` |
+| `Space` | pause (asks first) or resume GitHub fetching (the header shows `❚❚ PAUSED`). Only API calls stop: AI watchers stay connected, agents can still add rules and wait, and queued reports are delivered, but rules aren't checked until you resume. `R`, scrolling and switching still fetch once, and agents see the pause in `notify list` |
 | `+` / `-` | refresh faster or slower |
 | `Tab` / `1` `2` `3` | switch between the Board, Stats and AI link screens |
 | `Q` | quit (asks first, and warns if an AI agent is using the board). `Ctrl+C` quits straight away |
@@ -138,27 +138,31 @@ A board can be named by its **project title** (`"Roadmap"`, case doesn't matter,
 
 - **Board:** columns follow the view's grouping (Status by default) in a responsive grid. Columns sit side by side while they fit and wrap onto new rows when they don't. Each column shows 3 cards and scrolls with ↑/↓. Animated dotted connectors show the workflow direction. When a card changes column, the connectors it crossed light up for 90 seconds: yellow for forward moves, orange `◀` for moves back, with a `×N` count. A yellow ● marks recently changed cards.
 - **Stats:** a bar per column with a trend sparkline, plus breakdowns by state and assignee.
-- **AI link:** the link's state (board, socket, whether an agent is waiting, reports sent and queued), the rules agents have set with how many cards match each, and an activity log of rules added, cards queued, reports sent and agents connecting or leaving. Until an agent connects, it also shows the commands to run and a sample prompt for this board; press `C` to copy the prompt to the clipboard.
+- **AI link:** every watcher (which project is on screen, rules, reports sent and queued, whether an agent is waiting), totals, the rules agents have set with how many cards match each, and one activity timeline for all watchers. `X` stops a watcher. Until an agent connects, it also shows the commands to run and a sample prompt for this board; press `C` to copy the prompt to the clipboard.
 
-## AI link: let an AI agent react to card changes
+## AI link: let AI agents react to card changes
 
-The cardhub you have open can tell an AI agent (Claude Code, or any agent that can run commands) when cards change. The agent doesn't run its own polling loop. It asks cardhub to report specific changes and waits, using no model tokens until something happens. Quitting cardhub stops the watcher, and a waiting agent is told so.
+A running cardhub can tell AI agents (Claude Code, or any agent that can run commands) when cards change. An agent doesn't run its own polling loop. It asks cardhub to report specific changes and waits, using no model tokens until something happens.
+
+**Watchers are for AI, the screen is for you.** cardhub runs one *watcher* per project that agents use: the project on screen, plus any project an agent asks for. Watchers keep running when you switch projects, so you can browse other boards without interrupting an agent. One cardhub can serve several agents at once, for example AI 1 on project A and AI 2 on project B.
 
 ```sh
-cardhub notify add 'is:open label:bug'   # report cards matching this filter
-cardhub events --wait --json                      # block until there are reports
+cardhub notify add 'is:open label:bug' --board "Roadmap"   # report cards matching this filter
+cardhub events --wait --json --board "Roadmap"             # block until there are reports
 ```
 
-- **`notify add '<filter>'`** takes any GitHub project filter. Each matching card is reported once, cards that already match are reported straight away, and a card that stops matching and later matches again is reported again. If cardhub isn't open, this opens it: a new **cmux** tab in the agent's workspace, a new **tmux** window, or a new iTerm2 / Terminal / Ghostty / WezTerm window (Linux: your terminal emulator). Set `CARDHUB_TERMINAL='<cmd> {cmd}'` to choose another, or pass `--no-open`.
+- **`notify add '<filter>'`** takes any GitHub project filter. Each matching card is reported once, cards that already match are reported straight away, and a card that stops matching and later matches again is reported again. If no watcher runs for that project, the open cardhub starts one. If no cardhub is running at all, it opens in a new **cmux** tab in the agent's workspace, a new **tmux** window, or a new iTerm2 / Terminal / Ghostty / WezTerm window (Linux: your terminal emulator). Set `CARDHUB_TERMINAL='<cmd> {cmd}'` to choose another, or pass `--no-open`.
 - **`events --wait`** blocks until there are reports, prints them (`--json`: one card per line with `number`, `title`, `status`, `labels`, `url` and the matching `rule`), and exits. Reports that arrive while no agent waits are queued for the next call. `events` without `--wait` returns the queue immediately.
-- **`notify list`** shows rules, match counts and whether an agent is waiting. **`notify remove <id>`** stops a rule.
-- **Several boards open?** Add `--board "<project name>"` (or owner/number). Otherwise commands use the only open board, and `notify add` falls back to your last board.
+- **`notify list`** shows a watcher's rules, match counts and whether an agent is waiting. **`notify remove <id>`** stops a rule.
+- **`--board`** names the project by title, owner/number or URL. You can leave it out while only one project is watched.
+
+**Stopping watchers:** quitting cardhub stops all of them, and every waiting agent is told. On the AI link screen (`3`), `X` stops a single watcher after asking; its rules are dropped and its waiting agent is told. Watchers for projects not on screen also close by themselves after a minute with no rules and no agent. Pausing (`Space`) only stops GitHub fetching: watchers stay connected, but rules aren't checked until you resume.
 
 Exit codes: `0` ok · `1` error · `2` usage · `3` watcher stopped (cardhub quit) · `4` cardhub isn't open.
 
-**How the right agent gets the message:** cardhub never picks a terminal. The agent session that runs `events --wait` in the background owns that process, and the agent's harness (Claude Code, for one) wakes that session when the command exits. Only one agent can wait per open cardhub. The footer's AI link box shows its state, for example `1 rule · 3 sent · ● agent waiting`, and screen `3` shows the details.
+**How the right agent gets the message:** cardhub never picks a terminal. The agent session that runs `events --wait` in the background owns that process, and the agent's harness (Claude Code, for one) wakes that session when the command exits. One agent can wait per watcher. The footer's AI link box shows its state, for example `1 rule · 3 sent · ● agent waiting`, and screen `3` shows the details.
 
-Rules are checked on every sync against the whole project, whatever view or search is on screen. They cost about 1 point per sync for all rules together, and cover the first 50 matches per rule. cardhub stays read-only: agents change cards with their own tools (for example `gh project item-edit`).
+Rules are checked on their own timer against the whole project, whatever project, view or search is on screen. Each watched project costs about 1 point per check for all its rules together, and each rule covers its first 50 matches. cardhub stays read-only: agents change cards with their own tools (for example `gh project item-edit`).
 
 **Example agent instructions:**
 

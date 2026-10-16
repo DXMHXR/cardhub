@@ -19,6 +19,7 @@ type pickKind int
 const (
 	pickProject pickKind = iota
 	pickView
+	pickWatcher // stop one of the AI watchers
 )
 
 type projectsMsg struct {
@@ -42,6 +43,7 @@ type pickRow struct {
 	current     bool
 	proj        ProjectRef // pickProject
 	view        int        // pickView: index into m.views, -1 = all items
+	board       string     // pickWatcher: owner/number
 }
 
 func (m model) pickRows() []pickRow {
@@ -53,6 +55,21 @@ func (m model) pickRows() []pickRow {
 				meta: p.Owner + fmt.Sprintf(" #%d", p.Number), title: p.Title,
 				current: p.Owner == m.owner && p.Number == m.number, proj: p,
 			})
+		}
+	case pickWatcher:
+		for _, s := range m.hub.Snapshots() {
+			if !s.Active {
+				continue
+			}
+			detail := plural(len(s.Rules), "rule")
+			if s.Waiting {
+				detail += " · agent waiting"
+			}
+			if s.OnScreen {
+				detail += " · on screen"
+			}
+			rows = append(rows, pickRow{meta: s.Board, title: firstNonEmpty(s.Title, s.Board) + "  ·  " + detail,
+				current: s.Waiting, board: s.Board})
 		}
 	case pickView:
 		rows = append(rows, pickRow{meta: "", title: "All items", current: m.viewIdx < 0, view: -1})
@@ -157,8 +174,12 @@ func (m model) pickerKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.picker.cursor < len(list) {
 			m.picker.open = false
 			row := list[m.picker.cursor]
-			if m.picker.kind == pickProject {
+			switch m.picker.kind {
+			case pickProject:
 				return m, m.switchProject(row.proj)
+			case pickWatcher:
+				m.confirm, m.stopTarget = confirmStopWatcher, row.board
+				return m, nil
 			}
 			return m, m.switchView(row.view)
 		}
@@ -177,9 +198,8 @@ func (m *model) switchProject(p ProjectRef) tea.Cmd {
 		return nil
 	}
 	m.owner, m.number = p.Owner, p.Number
-	if m.notifier != nil { // the AI link follows the board on screen
-		m.notifier.Serve(p.Owner, p.Number)
-		m.ruleChecking, m.recheck = false, false
+	if m.hub != nil { // a watcher for the new project; the others keep running
+		m.hub.Show(p.Owner, p.Number)
 	}
 	m.board, m.meta, m.views, m.viewIdx, m.viewArg = nil, nil, nil, -1, ""
 	m.groupField, m.columns, m.history, m.moves = "", nil, nil, nil
@@ -217,8 +237,11 @@ func (m model) pickerBox(maxH int) string {
 	if m.owner == "" {
 		title = "Pick a project to watch"
 	}
-	if m.picker.kind == pickView {
+	switch m.picker.kind {
+	case pickView:
 		title, what = "Switch view", "views"
+	case pickWatcher:
+		title, what = "Stop an AI watcher", "watchers"
 	}
 
 	var b strings.Builder
@@ -274,6 +297,9 @@ func (m model) pickerBox(maxH int) string {
 func (m model) pickerHelp() string {
 	if m.owner == "" {
 		return "type to search · ↑↓ choose · enter open · ctrl+c quit"
+	}
+	if m.picker.kind == pickWatcher {
+		return "type to search · ↑↓ choose · enter stop · esc close"
 	}
 	return "type to search · ↑↓ choose · enter open · esc close"
 }

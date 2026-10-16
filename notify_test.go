@@ -105,3 +105,62 @@ func waitFor(t *testing.T, cond func() bool) {
 	}
 	t.Fatal("condition not reached")
 }
+
+func TestHubWatchersOutliveTheScreen(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "ch")
+	if err != nil {
+		t.Skip("no /tmp:", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Setenv("CARDHUB_SOCKET_DIR", dir)
+	h := NewHub(nil)
+	t.Cleanup(func() { h.StopAll("test over") })
+
+	// AI 1 watches project A, which is on screen
+	h.Show("acme", 1)
+	pathA := socketPath("acme", 1)
+	resp, err := call(pathA, request{Op: "add", Filter: "label:bug"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotA := make(chan response, 1)
+	go func() { r, _ := call(pathA, request{Op: "events", Wait: true}); gotA <- r }()
+	waitFor(t, func() bool { return h.Get("acme", 1).Status().Waiting })
+
+	// the human switches to project B: A's watcher and waiting agent stay
+	h.Show("acme", 2)
+	if !alive(pathA) || !h.Get("acme", 1).Status().Waiting {
+		t.Fatal("switching project must not stop A's watcher")
+	}
+
+	// AI 2 asks the running cardhub to watch project C as well
+	if _, err := call(socketPath("acme", 2), request{Op: "watch", Owner: "beta", Number: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if !alive(socketPath("beta", 7)) || h.Status().Boards != 3 {
+		t.Fatalf("want watchers for A, B and C, got %+v", h.Status())
+	}
+
+	// A's rule still reports to its agent
+	h.Get("acme", 1).Apply(map[int][]Item{resp.Rule.ID: {card("x", 5, "Todo")}}, "Status", time.Now())
+	if r := <-gotA; len(r.Events) != 1 || r.Events[0].Number != 5 {
+		t.Fatalf("A's agent got %+v", r)
+	}
+
+	// idle off-screen watchers close (C: no rules, no agent); B is on screen, A has a rule
+	h.Prune(0)
+	if alive(socketPath("beta", 7)) || !alive(pathA) || !alive(socketPath("acme", 2)) {
+		t.Fatalf("prune kept/closed the wrong watchers: %+v", h.Status())
+	}
+
+	// stopping A from the menu tells its waiting agent
+	go func() { r, _ := call(pathA, request{Op: "events", Wait: true}); gotA <- r }()
+	waitFor(t, func() bool { return h.Get("acme", 1).Status().Waiting })
+	h.StopWatcher("acme/1")
+	if r := <-gotA; !r.Stopped {
+		t.Fatalf("A's agent should hear the watcher stopped, got %+v", r)
+	}
+	if alive(pathA) {
+		t.Error("A's socket should be gone")
+	}
+}
