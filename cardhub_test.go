@@ -2,6 +2,10 @@ package main
 
 import (
 	"fmt"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -216,6 +220,35 @@ func TestIsRelease(t *testing.T) {
 	} {
 		if got := isRelease(v); got != want {
 			t.Errorf("isRelease(%q) = %v, want %v", v, got, want)
+		}
+	}
+}
+
+// TestPetsGallery writes animation frames of every pet, in a range of column
+// colours, for the README (CARDHUB_GALLERY=<dir> go test -run TestPetsGallery).
+func TestPetsGallery(t *testing.T) {
+	dir := os.Getenv("CARDHUB_GALLERY")
+	if dir == "" {
+		t.Skip("set CARDHUB_GALLERY to a folder to write the frames")
+	}
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	colors := []string{"GREEN", "YELLOW", "ORANGE", "BLUE", "GREEN", "PINK", "PURPLE", "RED"}
+	for step := 0; step < 48; step++ {
+		var out []string
+		for row := 0; row < 2; row++ {
+			var cells []string
+			for i := row * 4; i < row*4+4; i++ {
+				md := mood{}
+				if step >= 32 && i%2 == 0 { // every other pet wakes up near the end
+					md = mood{awake: true, since: step - 32}
+				}
+				cells = append(cells, strings.Join(scenes[i](step, md).render(palette(colors[i], true)), "\n"), "  ")
+			}
+			out = append(out, lipgloss.JoinHorizontal(lipgloss.Top, cells...), "")
+		}
+		name := filepath.Join(dir, fmt.Sprintf("f%02d.ansi", step))
+		if err := os.WriteFile(name, []byte(strings.Join(out, "\n")), 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

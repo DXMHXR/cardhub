@@ -1,37 +1,24 @@
-# cardhub
+# CardHub
 
-A live terminal dashboard for GitHub Projects (v2) boards. It shows your board as kanban columns, keeps it in sync with GitHub, and animates cards as they move through your workflow.
+A live terminal dashboard for **GitHub Projects** boards. CardHub shows your board as kanban columns, keeps it in sync with GitHub, animates cards as they move through your workflow, and can tell AI agents when cards change.
 
-## Quick start
+![CardHub showing the GitHub Public Roadmap board](docs/board.png)
 
-```sh
-# 1. Install (needs Go 1.24+, see Requirements)
-go install github.com/DXMHXR/cardhub@latest
+## Features
 
-# 2. Sign in to GitHub with the access cardhub needs (once)
-gh auth login --scopes read:project,repo
-
-# 3. Check everything is ready
-cardhub doctor
-
-# 4. Run it. The first time, you pick a project from a list.
-cardhub
-```
-
-After the first run, `cardhub` reopens the board and view you last watched.
-
-## Requirements
-
-| What | Why | Check |
-|---|---|---|
-| **Go 1.24 or newer** | to build cardhub | `go version` (install: https://go.dev/dl or `brew install go`) |
-| **A GitHub login with access to projects** | cardhub reads boards from GitHub's API | `cardhub doctor` |
-| A terminal at least 30 columns wide | the board layout adapts to any width above that | – |
-| GitHub CLI (`gh`) *(optional)* | the easiest way to sign in; cardhub reuses its login | `gh --version` (install: https://cli.github.com) |
-
-cardhub doesn't need `gh` to run. It only uses `gh` to read your login token, and only when no token is set in the environment.
+- **Live kanban board.** Columns follow your project's Status (or a view's grouping) in a responsive grid that wraps to fit any terminal 30+ columns wide. Each column shows 3 cards and scrolls.
+- **See work move.** Animated dotted connectors show the workflow direction. When a card changes column, the connectors it crossed light up: yellow for forward, orange `◀` for back, with a `×N` count. Recently changed cards get a yellow ●.
+- **Projects and saved views.** Switch project (`P`) or saved view (`V`) from a searchable menu. Open a board by its name, URL or owner/number. CardHub remembers the last board and view you watched.
+- **Search with GitHub filters.** `/` accepts free text or GitHub's filter syntax (`label:bug assignee:@me is:open`), and runs on GitHub, so column totals stay exact.
+- **Stats screen.** A bar and trend line per column, plus breakdowns by state and assignee.
+- **AI link.** AI agents (Claude Code or any agent that can run commands) ask CardHub to report specific card changes, then wait without polling. One CardHub can serve several agents on several projects at once.
+- **Gentle on the GitHub API.** It loads only the cards on screen (about 1 point per refresh, whatever the board's size), adjusts its refresh rate to your hourly budget, and shows that budget as a live bar. `Space` pauses refreshing.
+- **Empty columns, your way.** "No Task" on a quiet grid by default, or little Game Boy-style pets that doze, laze or wait for food, and jump awake when the cursor lands on their column.
+- **Easy setup.** `cardhub doctor` checks your token and access and tells you exactly how to fix anything missing. Errors explain the fix too.
 
 ## Install
+
+Requires **Go 1.24 or newer** (`go version`; get it from https://go.dev/dl or `brew install go`).
 
 ```sh
 go install github.com/DXMHXR/cardhub@latest
@@ -44,52 +31,60 @@ git clone https://github.com/DXMHXR/cardhub && cd cardhub
 make install          # same as: go install .
 ```
 
-Either way, this builds the `cardhub` command into Go's bin folder, usually `~/go/bin`. If `cardhub` isn't found afterwards, that folder isn't on your PATH yet. Add this line to `~/.zshrc` or `~/.bashrc` (`make install` prints it for you):
+Either way, this puts the `cardhub` command in Go's bin folder, usually `~/go/bin`. If `cardhub` isn't found afterwards, add that folder to your PATH in `~/.zshrc` or `~/.bashrc` (`make install` prints the line for you):
 
 ```sh
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-Other `make` targets: `make build` builds `./cardhub` here without installing, `make test` runs the tests, and `make uninstall` removes the installed command.
+Other `make` targets: `make build` (build `./cardhub` here), `make test`, `make uninstall`.
+
+## Quick start
+
+```sh
+gh auth login --scopes read:project,repo   # 1. sign in to GitHub (once)
+cardhub doctor                             # 2. check everything is ready
+cardhub                                    # 3. pick a project and go
+```
+
+After the first run, `cardhub` reopens the board and view you last watched.
 
 ## Sign in to GitHub
 
-cardhub looks for a token in this order and uses the first one it finds:
+CardHub looks for a token in this order and uses the first one it finds:
 
 1. the `GITHUB_TOKEN` environment variable
 2. the `GH_TOKEN` environment variable
-3. your GitHub CLI login (`gh auth token`)
+3. your GitHub CLI login (`gh auth token`). The [GitHub CLI](https://cli.github.com) is optional and only used for this.
 
-**The token needs these permissions:**
+The token needs these permissions:
 
 | Scope | Needed for | Without it |
 |---|---|---|
-| `read:project` (or `project`) | reading boards, columns and views | cardhub can't run |
-| `repo` | titles of cards that live in **private** repositories | those cards show as "(no access)" |
-| `read:org` | listing your organizations' projects in the project menu | org projects may be missing from `P`, though opening them by URL still works |
+| `read:project` (or `project`) | reading boards, columns and views | CardHub can't run |
+| `repo` | titles of cards in **private** repositories | those cards show as "(no access)" |
+| `read:org` | listing your organizations' projects in the `P` menu | org projects may be missing from the menu (opening them by URL still works) |
 
-**Option A: GitHub CLI (easiest)**
+**With the GitHub CLI (easiest):**
 
 ```sh
 gh auth login --scopes read:project,repo        # new login
 gh auth refresh --scopes read:project,repo      # already logged in: add the scopes
 ```
 
-**Option B: a personal access token**
+**With a personal access token:**
 
-- **Classic token:** create one at https://github.com/settings/tokens with the `read:project`, `repo` and `read:org` scopes.
-- **Fine-grained token:** grant Organization → *Projects: Read*, and Repository → *Issues*, *Pull requests* and *Metadata: Read*. Your organization may need to approve fine-grained tokens first.
-
-Then:
+- *Classic token:* create one at https://github.com/settings/tokens with `read:project`, `repo` and `read:org`.
+- *Fine-grained token:* grant Organization → *Projects: Read*, and Repository → *Issues*, *Pull requests* and *Metadata: Read*. Your organization may need to approve fine-grained tokens first.
 
 ```sh
 export GITHUB_TOKEN=<your token>     # add to ~/.zshrc to keep it
 ```
 
-## Check your setup: `cardhub doctor`
+### Check your setup
 
 ```
-cardhub doctor — checking what cardhub needs to run
+CardHub doctor v0.1.0 — checking what CardHub needs to run
 
  ✔ GitHub CLI installed
  ✔ GitHub token found          from gh auth token
@@ -106,69 +101,108 @@ Anything missing is marked ✘ or !, with the exact command that fixes it.
 ## Usage
 
 ```sh
-cardhub                                              # last board, or pick from a list
+cardhub                                              # last board, or pick one from a list
 cardhub "Roadmap"                                    # open a board by its project name
-cardhub https://github.com/orgs/my-org/projects/3   # open a board by its URL
-cardhub my-org 3                                     # same, by owner and number
-cardhub https://github.com/orgs/my-org/projects/3/views/6   # open a saved view
-cardhub -view Bug my-org 3                           # saved view by name or number
+cardhub https://github.com/orgs/my-org/projects/3   # …by its URL
+cardhub my-org 3                                     # …by owner and number
+cardhub -view Bug my-org 3                           # open a saved view (name or number)
+cardhub https://github.com/orgs/my-org/projects/3/views/6
 cardhub -once my-org 3                               # print column counts and exit
 cardhub doctor                                       # check your setup
 cardhub version                                      # print the version
-cardhub notify add 'is:open label:bug'      # AI link (see below)
+cardhub notify … / cardhub events …                  # AI link (see below)
 ```
 
-A board can be named by its **project title** (`"Roadmap"`, case doesn't matter, and a unique part such as `road` works too), by its URL (the address of the board in your browser), or by owner and number. If a name matches several projects, cardhub lists them so you can be more specific.
+A board can be named by its **project title** (case doesn't matter, and a unique part such as `road` works), by its URL (the board's address in your browser), or by owner and number. If a name matches several projects, CardHub lists them so you can be more specific. `-interval 30s` sets the fastest refresh rate.
 
 ### Keys
 
 | Key | Action |
 |---|---|
-| `←↓↑→` / `hjkl` | move between columns and cards |
+| `←↓↑→` / `hjkl` | move between columns and cards (past a column's end, ↑/↓ moves between grid rows) |
 | `⏎` / `o` | open the selected card on GitHub (`O` opens the board) |
-| `P` | switch project (dialog: type to search, `⏎` to open) |
-| `V` | switch saved view |
-| `/` | search, using free text or GitHub filters like `label:bug assignee:@me is:open` (`esc` clears) |
-| `R` | sync now |
-| `Space` | pause (asks first) or resume the board's refreshing (the header shows `❚❚ PAUSED`). Only the board on screen stops: AI watchers keep checking and reporting. `R`, scrolling and switching still fetch once |
+| `P` | switch project: a menu of every project you can open, type to search |
+| `V` | switch saved view (or "All items") |
+| `/` | search: free text or GitHub filters like `label:bug assignee:@me is:open` (`esc` clears) |
+| `R` | refresh now |
+| `Space` | pause or resume the board's refreshing (asks first). AI watchers keep running |
 | `+` / `-` | refresh faster or slower |
-| `Tab` / `1` `2` `3` | switch between the Board, Stats and AI link screens |
-| `S` | settings: turn the empty-column animations on or off. They're off by default (empty columns show "No Task" on a grid); the choice is saved between runs |
-| `Q` | quit (asks first, and warns if an AI agent is using the board). `Ctrl+C` quits straight away |
+| `Tab` / `1` `2` `3` | Board, Stats and AI link screens |
+| `S` | settings |
+| `X` / `C` | on the AI link screen: stop a watcher / copy the sample agent prompt |
+| `Q` | quit (asks first). `Ctrl+C` quits straight away |
 
-### Screens
+## Screens
 
-- **Board:** columns follow the view's grouping (Status by default) in a responsive grid. Columns sit side by side while they fit and wrap onto new rows when they don't. Each column shows 3 cards and scrolls with ↑/↓. Animated dotted connectors show the workflow direction. When a card changes column, the connectors it crossed light up for 90 seconds: yellow for forward moves, orange `◀` for moves back, with a `×N` count. A yellow ● marks recently changed cards. Empty columns show "No Task"; turn on animations in Settings (`S`) for a little pet scene in each one, which wakes up when the cursor lands on its column.
-- **Stats:** a bar per column with a trend sparkline, plus breakdowns by state and assignee.
-- **AI link:** every watcher (which project is on screen, rules, reports sent and queued, whether an agent is waiting), totals, the rules agents have set with how many cards match each, and one activity timeline for all watchers. `X` stops a watcher. Until an agent connects, it also shows the commands to run and a sample prompt for this board; press `C` to copy the prompt to the clipboard.
+### Board
+
+Columns sit side by side while they fit and wrap onto new rows when they don't. The selected column has a bold border in its colour, and the selected card a light-grey bar. The header shows the project, view, version and whether CardHub is live, paused or stale. The footer shows when the next refresh is due, the API budget, the AI link and the shortcuts.
+
+![Saved view menu over the board](docs/views.png)
+
+The project and view menus open as dialogs over the dimmed board. Type to search, `⏎` to open.
+
+### Stats
+
+![Stats screen](docs/stats.png)
+
+Items per column with a share bar and a trend over recent refreshes, plus breakdowns by state and by assignee. This screen loads every card, so it's the only one that costs more than about 1 API point per refresh, and only while it's open.
+
+### AI link
+
+![AI link screen with a rule and a waiting agent](docs/ailink.png)
+
+Every watcher (which project is on screen, rules, reports sent and queued, whether an agent is waiting), totals, the rules agents have set with how many cards match each, and one timeline of everything that happened. `X` stops a watcher. Until an agent connects, the screen also shows the commands to run and a sample prompt (`C` copies it).
+
+## Empty columns and settings
+
+Empty columns show **No Task** on a faint grid by default:
+
+![An empty column showing No Task](docs/notask.png)
+
+Press `S` for **Settings** and turn on **Empty column animations** for a little pixel scene in each empty column instead: a pet with nothing to do, in the column's colour. Each one is startled awake (a jump and a "!") when the cursor lands on its column, and stays awake while it's selected.
+
+![The eight empty-column pets](docs/pets.gif)
+
+A cat asleep in its basket, a puppy dreaming of a bone, an owl dozing under the moon, a fish waiting for food, a turtle sunning itself, chicks begging in their nest, a robot charging up, and a sloth hanging around. Settings are saved in `~/Library/Application Support/cardhub/settings.json` (macOS) or your platform's config folder.
 
 ## AI link: let AI agents react to card changes
 
-A running cardhub can tell AI agents (Claude Code, or any agent that can run commands) when cards change. An agent doesn't run its own polling loop. It asks cardhub to report specific changes and waits, using no model tokens until something happens.
+A running CardHub can tell AI agents when cards change. An agent doesn't run its own polling loop: it asks CardHub to report specific changes and waits, using no model tokens until something happens.
 
-**Watchers are for AI, the screen is for you.** cardhub runs one *watcher* per project that agents use: the project on screen, plus any project an agent asks for. Watchers keep running when you switch projects, so you can browse other boards without interrupting an agent. One cardhub can serve several agents at once, for example AI 1 on project A and AI 2 on project B.
+**Watchers are for AI, the screen is for you.** CardHub runs one *watcher* per project that agents use: the project on screen, plus any project an agent asks for. Watchers keep running when you switch projects or pause the board, so you can browse without interrupting an agent. One CardHub can serve several agents at once, for example AI 1 on project A and AI 2 on project B.
 
 ```sh
 cardhub notify add 'is:open label:bug' --board "Roadmap"   # report cards matching this filter
 cardhub events --wait --json --board "Roadmap"             # block until there are reports
 ```
 
-- **`notify add '<filter>'`** takes any GitHub project filter. Each matching card is reported once, cards that already match are reported straight away, and a card that stops matching and later matches again is reported again. If no watcher runs for that project, the open cardhub starts one. If no cardhub is running at all, it opens in a new **cmux** tab in the agent's workspace, a new **tmux** window, or a new iTerm2 / Terminal / Ghostty / WezTerm window (Linux: your terminal emulator). Set `CARDHUB_TERMINAL='<cmd> {cmd}'` to choose another, or pass `--no-open`.
+- **`notify add '<filter>'`** takes any GitHub project filter. Each matching card is reported once, cards that already match are reported straight away, and a card that stops matching and later matches again is reported again. If no watcher runs for that project, the open CardHub starts one. If CardHub isn't running at all, it opens in a new **cmux** tab in the agent's workspace, a new **tmux** window, or a new iTerm2 / Terminal / Ghostty / WezTerm window (on Linux, your terminal emulator). Set `CARDHUB_TERMINAL='<cmd> {cmd}'` to choose another, or pass `--no-open`.
 - **`events --wait`** blocks until there are reports, prints them (`--json`: one card per line with `number`, `title`, `status`, `labels`, `url` and the matching `rule`), and exits. Reports that arrive while no agent waits are queued for the next call. `events` without `--wait` returns the queue immediately.
 - **`notify list`** shows a watcher's rules, match counts and whether an agent is waiting. **`notify remove <id>`** stops a rule.
 - **`--board`** names the project by title, owner/number or URL. You can leave it out while only one project is watched.
 
-**Stopping watchers:** quitting cardhub stops all of them, and every waiting agent is told. On the AI link screen (`3`), `X` stops a single watcher after asking; its rules are dropped and its waiting agent is told. Watchers for projects not on screen also close by themselves after a minute with no rules and no agent. Pausing the board (`Space`) doesn't affect watchers: they keep checking and reporting.
+Exit codes: `0` ok · `1` error · `2` usage · `3` watcher stopped (CardHub quit or the watcher was stopped) · `4` CardHub isn't open.
 
-Exit codes: `0` ok · `1` error · `2` usage · `3` watcher stopped (cardhub quit) · `4` cardhub isn't open.
+**How the right agent gets the message:** CardHub never picks a terminal. The agent session that runs `events --wait` in the background owns that process, and the agent's harness (Claude Code, for one) wakes that session when the command exits. One agent can wait per watcher.
 
-**How the right agent gets the message:** cardhub never picks a terminal. The agent session that runs `events --wait` in the background owns that process, and the agent's harness (Claude Code, for one) wakes that session when the command exits. One agent can wait per watcher. The footer's AI link box shows its state, for example `1 rule · 3 sent · ● agent waiting`, and screen `3` shows the details.
+**Stopping watchers:** quitting CardHub stops all of them, and every waiting agent is told. `X` on the AI link screen stops one after asking. Watchers for projects not on screen close by themselves after a minute with no rules and no agent.
 
-Rules are checked on their own timer against the whole project, whatever project, view or search is on screen. Each watched project costs about 1 point per check for all its rules together, and each rule covers its first 50 matches. cardhub stays read-only: agents change cards with their own tools (for example `gh project item-edit`).
+Rules are checked on their own timer against the whole project, whatever is on screen: about 1 API point per watched project per check, covering each rule's first 50 matches. CardHub only reads: agents change cards with their own tools (for example `gh project item-edit`).
 
 **Example agent instructions:**
 
-> Run `cardhub notify add 'is:open label:bug' --board my-org/3`, then run `cardhub events --wait --json` in the background. When it returns, handle each reported card, oldest first, then run `events --wait` again. If it exits with code 3, cardhub was closed: stop and say so.
+> Run `cardhub notify add 'is:open label:bug'`, then run `cardhub events --wait --json` in the background. When it returns, handle each reported card, oldest first, then run `events --wait` again. If it exits with code 3 or 4, CardHub was closed: stop and say so.
+
+## How it stays cheap on the GitHub API
+
+GitHub doesn't push live updates for project boards, so CardHub polls its GraphQL API. Every token gets 5,000 points per hour, shared with `gh` and other tools. CardHub keeps its share small:
+
+- **The board loads only what's on screen.** One request covers every column and fetches the visible cards plus a few extra for scrolling, along with each column's exact total: about 1 point per refresh, whatever the board's size. Scrolling further loads more (`loading…` shows briefly), up to the first 100 cards of a column.
+- **Only the Stats screen loads every card** (about 3 points per 100 cards), and only while it's open.
+- **The refresh rate adjusts itself.** CardHub uses at most ~15% of the hourly budget, and at most half of what's left before it resets. `-interval` (default 30s) and `+`/`-` set the fastest rate; 5 minutes is the slowest. When it has slowed down, the footer shows `Every: 1m0s (auto)`.
+
+Moves are detected even while only some cards are loaded: exactly for cards on screen, and from changes in column totals for the rest. Archived cards are hidden.
 
 ## Troubleshooting
 
@@ -180,20 +214,10 @@ Rules are checked on their own timer against the whole project, whatever project
 | `project … not found` | check the owner and number in the board's URL, and that you can open it on GitHub |
 | cards show `(no access)` | add the `repo` scope: `gh auth refresh --scopes repo` |
 | an org's projects don't appear under `P` | add the `read:org` scope, or open the board by URL |
-| `cardhub: command not found` | add Go's bin folder to PATH (see Install) |
-| `cardhub isn't open` (exit 4) from `events` | open the board (`cardhub <owner> <number>`), or let `cardhub notify add` open it |
+| `cardhub: command not found` | add Go's bin folder to your PATH (see Install) |
+| `CardHub isn't open` (exit 4) from `events` | open the board (`cardhub "<project name>"`), or let `cardhub notify add` open it |
 
 `cardhub doctor` checks all of these at once.
-
-## How it stays cheap on the GitHub API
-
-GitHub doesn't push live updates for project boards, so cardhub polls its GraphQL API. Every token gets 5,000 points per hour, shared with `gh` and other tools. cardhub keeps its share small:
-
-- **The board loads only what's on screen.** One request covers every column and fetches the visible cards plus a few extra for scrolling, along with each column's exact total. That costs about 1 point per sync, whatever the board's size. Scrolling further loads more (`loading…` shows briefly), up to the first 100 cards of a column.
-- **Only the Stats screen loads every card** (about 3 points per 100 cards), and only while it's open.
-- **The refresh rate adjusts itself.** cardhub uses at most ~15% of the hourly budget, and at most half of what's left before it resets. `-interval` (default 30s) and `+`/`-` set the fastest rate, and 5 minutes is the slowest. When it has slowed down, the footer shows `Every: 1m0s (auto)`, and the API bar shows how much budget is used and when it resets.
-
-Moves are detected even while only some cards are loaded. They're exact for cards on screen, and inferred from changes in column totals for the rest. The `/` search also runs on GitHub, so column totals stay correct. Archived cards are hidden.
 
 ## License
 
