@@ -114,6 +114,7 @@ cardhub https://github.com/orgs/my-org/projects/3/views/6   # open a saved view
 cardhub -view Bug my-org 3                           # saved view by name or number
 cardhub -once my-org 3                               # print column counts and exit
 cardhub doctor                                       # check your setup
+cardhub version                                      # print the version
 cardhub notify add 'is:open label:bug'      # AI link (see below)
 ```
 

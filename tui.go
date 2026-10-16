@@ -878,6 +878,12 @@ func (m model) headerView() string {
 			live = errStyle.Render("● STALE")
 		}
 	}
+	// the version sits just left of the live status, dim
+	if live != "" {
+		live = dim.Render(versionLabel()) + "  " + live
+	} else {
+		live = dim.Render(versionLabel())
+	}
 	name := titleBar.Render(trunc(title, max(6, m.width-lipgloss.Width(live)-6)))
 	line := lipgloss.JoinHorizontal(lipgloss.Center,
 		name, strings.Repeat(" ", max(1, m.width-lipgloss.Width(name)-lipgloss.Width(live))), live)

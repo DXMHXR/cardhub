@@ -206,3 +206,16 @@ func TestPetsOffByDefault(t *testing.T) {
 		t.Fatal("turning animations on should be saved")
 	}
 }
+
+func TestIsRelease(t *testing.T) {
+	for v, want := range map[string]bool{
+		"v0.1.0": true, "v1.2.3": true, "(devel)": false, "": false,
+		"v0.0.0-20261016194020-95a00727c30f":       false,
+		"v0.0.0-20261016194020-95a00727c30f+dirty": false,
+		"v0.1.1-0.20261016194020-95a00727c30f":     false,
+	} {
+		if got := isRelease(v); got != want {
+			t.Errorf("isRelease(%q) = %v, want %v", v, got, want)
+		}
+	}
+}

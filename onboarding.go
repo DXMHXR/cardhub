@@ -66,7 +66,7 @@ func check(mark, title string, detail ...string) {
 
 // runDoctor returns the process exit code: 0 when cardhub can run.
 func runDoctor() int {
-	fmt.Println(bold.Render("CardHub doctor") + hint.Render(" — checking what CardHub needs to run"))
+	fmt.Println(bold.Render("CardHub doctor") + hint.Render(" "+versionLabel()+" — checking what CardHub needs to run"))
 	fmt.Println()
 
 	if _, err := exec.LookPath("gh"); err == nil {

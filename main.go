@@ -11,7 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-const usage = `CardHub — live terminal view of a GitHub Projects (v2) board
+const usage = `CardHub %s — live terminal view of a GitHub Projects (v2) board
 
 Usage:
   cardhub                        reopen the last board, or pick one from a list
@@ -19,6 +19,7 @@ Usage:
   cardhub <project-url>          e.g. https://github.com/orgs/my-org/projects/3
   cardhub <owner> <number>       e.g. cardhub my-org 3
   cardhub doctor                 check your setup (token, scopes, projects)
+  cardhub version                print the version
   cardhub notify | events        AI link: let an AI agent hear about card changes
                                  (cardhub notify -h for details)
 
@@ -38,10 +39,13 @@ func main() {
 	group := flag.String("group", "", "single-select field to group columns by (default: the view's grouping, else Status)")
 	viewArg := flag.String("view", "", "saved project view to show, by name or number (default: all items)")
 	once := flag.Bool("once", false, "print a one-shot summary and exit (no UI)")
-	flag.Usage = func() { fmt.Fprint(os.Stderr, usage); flag.PrintDefaults() }
+	flag.Usage = func() { fmt.Fprintf(os.Stderr, usage, versionLabel()); flag.PrintDefaults() }
 	// AI link commands have their own flags
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "version", "--version", "-version", "-v":
+			fmt.Println("CardHub " + versionLabel())
+			return
 		case "notify":
 			os.Exit(runNotify(os.Args[2:]))
 		case "events":
