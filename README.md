@@ -129,6 +129,7 @@ A board can be named by its **project title** (`"Roadmap"`, case doesn't matter,
 | `V` | switch saved view |
 | `/` | search, using free text or GitHub filters like `label:bug assignee:@me is:open` (`esc` clears) |
 | `R` | sync now |
+| `Space` | pause or resume automatic syncing (the header shows `❚❚ PAUSED`). While paused, `R`, scrolling and switching still fetch once, AI rules aren't checked, and agents see the pause in `notify list` |
 | `+` / `-` | refresh faster or slower |
 | `Tab` / `1` `2` `3` | switch between the Board, Stats and AI link screens |
 | `Q` | quit |

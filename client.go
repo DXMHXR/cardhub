@@ -114,6 +114,9 @@ func runNotify(args []string) int {
 		if resp.Waiting {
 			waiting = "an agent is waiting"
 		}
+		if resp.Paused {
+			waiting += " · syncing paused in cardhub (no new reports until resumed)"
+		}
 		fmt.Printf("%s · %d queued · %d sent · %s\n", boardLabel(resp.Title, resp.Board), resp.Queued, resp.Sent, waiting)
 		if len(resp.Rules) == 0 {
 			fmt.Println("no rules yet: cardhub notify add '<filter>'")

@@ -106,6 +106,7 @@ type model struct {
 	ruleChecking bool
 	recheck      bool   // a rule was added while a check was running
 	copied       string // confirmation after copying the sample prompt
+	paused       bool   // Space: no automatic syncs (or AI rule checks) until resumed
 	query        string // "/" search text the current board was fetched with
 	picker       picker
 
@@ -368,7 +369,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.fetchCmd()
 
 	case tickMsg:
-		if !m.fetching && !m.nextFetch.IsZero() && time.Now().After(m.nextFetch) {
+		if !m.paused && !m.fetching && !m.nextFetch.IsZero() && time.Now().After(m.nextFetch) {
 			return m, tea.Batch(tick(), m.fetchCmd())
 		}
 		return m, tick()
@@ -630,6 +631,14 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.row = 1 << 30
 		m.clampCursor()
 		return m, m.loadMore()
+	case " ", "space":
+		// pause automatic syncs; things you do (R, scrolling, switching) still fetch once
+		m.paused = !m.paused
+		m.notifier.SetPaused(m.paused)
+		if !m.paused && !m.fetching && m.owner != "" {
+			return m, m.fetchCmd() // resume with a fresh sync
+		}
+		return m, nil
 	case "p":
 		return m, m.openPicker(pickProject)
 	case "c", "C":
@@ -780,7 +789,10 @@ func (m model) headerView() string {
 	var live string
 	if m.board != nil {
 		live = lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950")).Render("● LIVE")
-		if m.lastErr != nil {
+		switch {
+		case m.paused:
+			live = lipgloss.NewStyle().Foreground(lipgloss.Color("#d29922")).Bold(true).Render("❚❚ PAUSED")
+		case m.lastErr != nil:
 			live = errStyle.Render("● STALE")
 		}
 	}
@@ -928,6 +940,9 @@ func (m model) linkBody() (string, lipgloss.Color, bool) {
 	if st.Queued > 0 {
 		parts = append(parts, fmt.Sprintf("%d queued", st.Queued))
 	}
+	if st.Paused {
+		parts = append(parts, "paused")
+	}
 	agent, accent := ftRule.Render("○")+" "+ftLabel.Render("no agent waiting"), grey
 	if st.Waiting {
 		agent, accent = lipgloss.NewStyle().Foreground(green).Render("●")+" "+ftLabel.Render("agent waiting"), green
@@ -951,6 +966,9 @@ func (m model) footerView() string {
 	switch {
 	case m.fetching:
 		sync = append(sync, m.spin.View()+" "+ftLabel.Render("Syncing…"))
+	case m.paused:
+		sync = append(sync, lipgloss.NewStyle().Foreground(lipgloss.Color("#d29922")).Bold(true).Render("❚❚ Paused")+
+			dim.Render(" (Space resumes)"))
 	case !m.nextFetch.IsZero():
 		sync = append(sync, pair("Next", fmt.Sprintf("%ds", max(0, int(time.Until(m.nextFetch).Seconds())))))
 	}
@@ -977,7 +995,8 @@ func (m model) footerView() string {
 	other := map[view]string{viewBoard: "Stats", viewStats: "AI link", viewLink: "Board"}[m.view]
 	keys := []string{
 		pair("←↓↑→", "Move"), pair("⏎", "Open"), pair("P", "Project"), pair("V", "View"),
-		pair("/", "Filter"), pair("R", "Sync"), pair("+/-", "Interval"), pair("Tab", other), pair("Q", "Quit"),
+		pair("/", "Filter"), pair("R", "Sync"), pair("Space", pick(m.paused, "Resume", "Pause")),
+		pair("+/-", "Interval"), pair("Tab", other), pair("Q", "Quit"),
 	}
 	if m.view == viewLink && m.notifier.Status().Active {
 		keys = append(keys[:len(keys)-1], pair("C", "Copy prompt"), keys[len(keys)-1])

@@ -83,7 +83,13 @@ func (m model) linkHero(snap LinkSnapshot, w int) string {
 		path = "~" + strings.TrimPrefix(path, home)
 	}
 	line2 := dim.Render("listening since "+snap.Since.Format("15:04")) + dim.Render(" · ") + dim.Render(trunc(path, max(10, inner-26)))
-	return boxRows([]footBox{{title: "Watching", accent: accent, lines: []string{line1, line2}}}, w)
+	lines := []string{line1, line2}
+	if snap.Paused {
+		accent = lvYellow
+		lines = append(lines, fg(lvYellow).Bold(true).Render("❚❚ Syncing paused")+
+			dim.Render(": rules aren't checked and nothing new is reported. Space resumes."))
+	}
+	return boxRows([]footBox{{title: "Watching", accent: accent, lines: lines}}, w)
 }
 
 // linkTiles: the four numbers that matter, as tiles.
