@@ -122,6 +122,12 @@ type model struct {
 	query        string      // "/" search text the current board was fetched with
 	picker       picker
 
+	latest    string    // newest CardHub release on GitHub, once checked
+	nextCheck time.Time // next look for a new release
+	updating  bool      // U: downloading and installing m.latest
+	updated   string    // the release installed this session (restart to use it)
+	updateErr error     // why the last update failed
+
 	fetching  bool
 	fetchSeq  int
 	nextFetch time.Time
@@ -153,9 +159,9 @@ func newModel(c *Client, owner string, number int, interval time.Duration, group
 
 func (m model) Init() tea.Cmd {
 	if m.owner == "" {
-		return tea.Batch(m.spin.Tick, tick(), animate(), listProjects(m.client))
+		return tea.Batch(m.spin.Tick, tick(), animate(), checkUpdateCmd(), listProjects(m.client))
 	}
-	return tea.Batch(m.spin.Tick, tick(), animate(), func() tea.Msg { return startFetch{} })
+	return tea.Batch(m.spin.Tick, tick(), animate(), checkUpdateCmd(), func() tea.Msg { return startFetch{} })
 }
 
 type startFetch struct{}
@@ -389,6 +395,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 
+	case updateCheckMsg:
+		if msg.latest != "" {
+			m.latest = msg.latest
+		}
+		return m, nil
+
+	case updateDoneMsg:
+		m.updating = false
+		if m.updateErr = msg.err; msg.err == nil {
+			m.updated = msg.tag
+		}
+		return m, nil
+
 	case animMsg:
 		m.frame++
 		return m, animate()
@@ -411,6 +430,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if time.Now().After(m.nextRules) { // AI watchers have their own timer, unaffected by pause
 			cmds = append(cmds, m.checkRules())
+		}
+		if m.nextCheck.IsZero() {
+			m.nextCheck = time.Now().Add(checkEvery) // Init already checked
+		} else if time.Now().After(m.nextCheck) {
+			m.nextCheck = time.Now().Add(checkEvery)
+			cmds = append(cmds, checkUpdateCmd())
 		}
 		m.hub.Retake()
 		m.hub.Prune(idleAfter)
@@ -652,6 +677,11 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "Q":
 		m.confirm = confirmQuitApp // Q is easy to hit by accident
 		return m, nil
+	case "u", "U":
+		if m.canUpdate() {
+			m.confirm = confirmUpdate
+		}
+		return m, nil
 	case "tab", "shift+tab":
 		if k.String() == "tab" {
 			m.view = (m.view + 1) % numViews
@@ -886,11 +916,23 @@ func (m model) headerView() string {
 			live = errStyle.Render("● STALE")
 		}
 	}
-	// the version sits just left of the live status, dim
+	// the version sits just left of the live status, dim, with news of a release
+	ver := dim.Render(versionLabel())
+	green := lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950")).Bold(true)
+	switch {
+	case m.updating:
+		ver += " " + m.spin.View() + dim.Render(" updating to "+m.latest+"…")
+	case m.updated != "":
+		ver += " " + green.Render("✓ "+m.updated+" installed") + dim.Render(" · restart to use it")
+	case m.updateErr != nil:
+		ver += " " + errStyle.Render("update failed") + dim.Render(" (U)")
+	case m.updateAvailable():
+		ver += " " + green.Render("↑ "+m.latest)
+	}
 	if live != "" {
-		live = dim.Render(versionLabel()) + "  " + live
+		live = ver + "  " + live
 	} else {
-		live = dim.Render(versionLabel())
+		live = ver
 	}
 	// another cardhub has the AI link for this project: say so up top
 	if m.owner != "" && m.hub.Status().Conflict != "" {
@@ -924,6 +966,15 @@ func (m model) headerView() string {
 		line += "\n\n" + box // blank line between the menu and the filter box
 	}
 	return line + "\n"
+}
+
+// updateAvailable reports whether GitHub has a newer release than this build.
+func (m model) updateAvailable() bool { return newer(versionLabel(), m.latest) }
+
+// canUpdate reports whether U can install the newer release here: a release
+// build (not one from source) that hasn't installed it already.
+func (m model) canUpdate() bool {
+	return m.updateAvailable() && selfUpdatable() && !m.updating && m.updated == ""
 }
 
 func (m model) currentView() *ProjectView {
@@ -1142,6 +1193,9 @@ func (m model) footerView() string {
 	}
 	if m.view == viewLink && m.hub.Status().Boards > 0 {
 		keys = append(keys[:len(keys)-1], pair("X", "Stop watcher"), pair("C", "Copy prompt"), keys[len(keys)-1])
+	}
+	if m.canUpdate() {
+		keys = append(keys[:len(keys)-1], pair("U", "Update to "+m.latest), keys[len(keys)-1])
 	}
 	shortcuts := footBox{title: "Shortcuts", accent: lipgloss.Color("#8b949e"), lines: flow(keys, m.width-4, "   ")}
 

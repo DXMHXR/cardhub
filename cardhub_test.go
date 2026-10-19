@@ -277,3 +277,18 @@ func TestSkillInstallsOnlyForAgentsPresent(t *testing.T) {
 		t.Error("uninstall should remove the skill")
 	}
 }
+
+func TestNewer(t *testing.T) {
+	for _, c := range []struct {
+		cur, tag string
+		want     bool
+	}{
+		{"v0.2.2", "v0.2.3", true}, {"v0.2.2", "v0.3.0", true}, {"v0.2.2", "v1.0.0", true},
+		{"v0.2.2", "v0.2.2", false}, {"v0.2.3", "v0.2.2", false}, {"v0.10.0", "v0.9.9", false},
+		{"v0.2.1+dirty", "v0.2.2", true}, {"v0.2.2", "", false}, {"(devel)", "v0.2.2", false},
+	} {
+		if got := newer(c.cur, c.tag); got != c.want {
+			t.Errorf("newer(%q, %q) = %v, want %v", c.cur, c.tag, got, c.want)
+		}
+	}
+}

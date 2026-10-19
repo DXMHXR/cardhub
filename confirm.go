@@ -6,7 +6,7 @@ import (
 )
 
 // Confirmation dialogs for keys that are easy to hit by accident: Space
-// (pause syncing) and Q (quit). Only Y or Enter confirms; anything else (N,
+// (pause syncing), Q (quit), X (stop a watcher) and U (update). Only Y or Enter confirms; anything else (N,
 // Esc, or the same key again: a double-tap) cancels.
 
 type confirmKind int
@@ -16,6 +16,7 @@ const (
 	confirmPauseSync
 	confirmQuitApp
 	confirmStopWatcher // stop m.stopTarget's watcher
+	confirmUpdate      // install the newer release (m.latest)
 )
 
 func (m model) confirmKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -32,6 +33,9 @@ func (m model) confirmKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case confirmStopWatcher:
 			m.hub.StopWatcher(m.stopTarget)
+		case confirmUpdate:
+			m.updating, m.updateErr = true, nil
+			return m, updateCmd(m.latest)
 		}
 	}
 	return m, nil
@@ -74,8 +78,17 @@ func (m model) confirmDialog() string {
 			lines = append(lines, "", fg(yellow).Render("! ")+
 				ftLabel.Render("An agent is waiting on it: it's told the watcher stopped (exit code 3)."))
 		}
+	case confirmUpdate:
+		accent = lipgloss.Color("#3fb950")
+		lines = []string{bold.Foreground(accent).Render("Update CardHub to " + m.latest + "?"), "",
+			ftLabel.Render("Downloads the release from GitHub, checks it against its checksums and replaces this CardHub (" + versionLabel() + ")."),
+			"", ftLabel.Render("This screen keeps running the old version until you restart CardHub.") +
+				dim.Render(" Release notes: github.com/"+repoSlug+"/releases")}
+		if m.updateErr != nil {
+			lines = append(lines, "", errStyle.Render("Last try failed: "+m.updateErr.Error()))
+		}
 	}
-	verb := map[confirmKind]string{confirmPauseSync: " pause", confirmQuitApp: " quit", confirmStopWatcher: " stop"}[m.confirm]
+	verb := map[confirmKind]string{confirmPauseSync: " pause", confirmQuitApp: " quit", confirmStopWatcher: " stop", confirmUpdate: " update"}[m.confirm]
 	lines = append(lines, "",
 		ftKey.Render("Y")+dim.Render(" / ")+ftKey.Render("Enter")+ftLabel.Render(verb)+dim.Render("    ")+
 			ftKey.Render("N")+dim.Render(" / ")+ftKey.Render("Esc")+ftLabel.Render(" cancel"))

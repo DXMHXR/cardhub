@@ -20,6 +20,7 @@ Usage:
   cardhub <owner> <number>       e.g. cardhub my-org 3
   cardhub doctor                 check your setup (token, scopes, projects)
   cardhub version                print the version
+  cardhub update                 install the latest release in place
   cardhub notify | events        AI link: let an AI agent hear about card changes
                                  (cardhub notify -h for details)
   cardhub guide                  how AI agents use the AI link (the manual they read)
@@ -47,7 +48,12 @@ func main() {
 		switch os.Args[1] {
 		case "version", "--version", "-version", "-v":
 			fmt.Println("CardHub " + versionLabel())
+			if c := loadUpdateCache(); newer(versionLabel(), c.Latest) { // no network: what the last check found
+				fmt.Printf("CardHub %s is out: run cardhub update\n", c.Latest)
+			}
 			return
+		case "update":
+			os.Exit(runUpdate())
 		case "notify":
 			os.Exit(runNotify(os.Args[2:]))
 		case "events":

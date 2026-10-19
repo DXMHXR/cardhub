@@ -71,6 +71,10 @@ Install CardHub (https://github.com/DXMHXR/cardhub), a terminal dashboard for Gi
    the installed version and how to start it: `cardhub`.
 ```
 
+### Updating
+
+CardHub checks GitHub for a new release when it starts and every few hours. When there is one, the header shows `↑ vX.Y.Z` next to the version: press `U` to install it, or run `cardhub update`. Either way CardHub downloads the release for your system, checks it against the release's `checksums.txt` and replaces itself; restart CardHub to use the new version. A CardHub built from source only shows that a release is out: update it with `git pull` and `make build`.
+
 ## Quick start
 
 ```sh
@@ -142,6 +146,7 @@ cardhub https://github.com/orgs/my-org/projects/3/views/6
 cardhub -once my-org 3                               # print column counts and exit
 cardhub doctor                                       # check your setup
 cardhub version                                      # print the version
+cardhub update                                       # install the latest release in place
 cardhub notify … / cardhub events …                  # AI link (see below)
 cardhub guide                                        # the AI link manual agents read
 cardhub skill install                                # teach your AI agent CLIs to use CardHub
@@ -164,6 +169,7 @@ A board can be named by its **project title** (case doesn't matter, and a unique
 | `Tab` / `1` `2` `3` | Board, Stats and AI link screens |
 | `S` | settings |
 | `X` / `C` | on the AI link screen: stop a watcher / copy the sample agent prompt |
+| `U` | install the new release when the header shows `↑ vX.Y.Z` (asks first) |
 | `Q` | quit (asks first). `Ctrl+C` quits straight away |
 
 ## Screens
