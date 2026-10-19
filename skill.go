@@ -22,10 +22,15 @@ CardHub only reads the board; change cards with your own tools (gh).
 
 The loop
   1. cardhub notify add '<filter>' --board "<project>" --no-open
-       Report cards matching a GitHub project filter, e.g. 'is:open label:bug'
-       or 'label:needs-triage status:Todo'. Each card is reported once; cards
-       that already match are reported straight away. Adding the same filter
-       again is harmless.
+       Report cards matching a GitHub project filter: anything the project's
+       filter bar takes, e.g. 'label:needs-triage', 'milestone:"Sprint 12"',
+       'assignee:@me', 'status:"Ready for Test"' (a card arriving in that
+       column), 'is:pr is:open', combined or negated with -. Each card is
+       reported once, when it starts matching; cards that already match are
+       reported straight away. Adding the same filter again is harmless.
+       A mistyped qualifier matches nothing or is ignored: check the match
+       count with notify list. Comments and edits that don't change a match
+       aren't reported.
   2. cardhub events --wait --json --board "<project>"
        Run it IN THE BACKGROUND (your harness wakes you when it exits). It
        blocks until there are reports, prints one JSON object per line

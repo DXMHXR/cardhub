@@ -236,6 +236,21 @@ cardhub events --wait --json --board "Roadmap"             # block until there a
 
 Exit codes: `0` ok · `1` error · `2` usage · `3` watcher stopped (CardHub quit or the watcher was stopped) · `4` CardHub isn't open.
 
+**What a rule can watch:** anything you can type in the project's filter bar on GitHub. A rule fires when a card *starts* matching it, so a rule on a column means "a card arrived there".
+
+| Watch for | Rule |
+|---|---|
+| A label | `label:needs-triage` |
+| A milestone | `milestone:"Sprint 12"` |
+| Who it's assigned to | `assignee:@me`, `no:assignee is:open` |
+| A card arriving in a column | `status:"Ready for Test"` |
+| Any other project field | `iteration:@current`, `priority:High` |
+| A repository | `repo:my-org/app is:open` |
+| Issues or pull requests | `is:issue`, `is:pr is:open` |
+| Several at once, or excluding some | `label:bug milestone:"Sprint 12" -label:wontfix` |
+
+The project isn't part of the filter: each rule belongs to the project named by `--board`. A mistyped qualifier isn't an error on GitHub (it matches nothing, or is ignored), so check the match count with `notify list` after adding a rule. Comments, and edits that don't change whether a card matches (a new title, say), aren't reported.
+
 **How the right agent gets the message:** CardHub never picks a terminal. The agent session that runs `events --wait` in the background owns that process, and the agent's harness (Claude Code, for one) wakes that session when the command exits. One agent can wait per watcher.
 
 **Stopping watchers:** quitting CardHub stops all of them, and every waiting agent is told. `X` on the AI link screen stops one after asking. Watchers for projects not on screen close by themselves after a minute with no rules and no agent.
