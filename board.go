@@ -193,9 +193,9 @@ func (m model) columnBox(ci, w int, lay boxLayout) string {
 	}
 	if c.total == 0 {
 		// an empty column has no scroll line: centre the scene in everything
-		// between the title rule and the bottom border (too little room for
-		// a pet in compact boxes)
-		if m.settings.Pets && !lay.compact {
+		// between the title rule and the bottom border (the pet only when it
+		// fits whole)
+		if m.settings.Pets && m.petFits(inner, ih-len(top)) {
 			body = m.emptyState(ci, c, inner, ih-len(top), sel)
 		} else {
 			body = noTask(inner, ih-len(top)) // the default

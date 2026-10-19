@@ -412,6 +412,16 @@ func (p *pix) render(pal map[byte]string) []string {
 	return lines
 }
 
+// petFits reports whether a whole scene (and its "no match" line while
+// searching) fits in a space w wide and h tall; a clipped pet isn't shown.
+func (m model) petFits(w, h int) bool {
+	need := pxH / 2 // two pixels per character cell
+	if strings.TrimSpace(m.filter.Value()) != "" {
+		need++
+	}
+	return w >= pxW && h >= need
+}
+
 // emptyState plays column ci's scene (with a small "no match" under it while a
 // search finds nothing there), centred in a space inner wide and h tall.
 func (m model) emptyState(ci int, c column, inner, h int, sel bool) string {
