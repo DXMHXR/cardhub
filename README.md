@@ -237,7 +237,7 @@ Rules are checked on their own timer against the whole project, whatever is on s
 
 **With the skill installed,** open CardHub on your board and just tell your agent what to watch, in your own words:
 
-> Use cardhub to watch Qasir App Project for cards labelled needs-triage, and triage each one as it comes in.
+> Use cardhub to watch the Roadmap project for cards labelled needs-triage, and triage each one as it comes in.
 
 The agent reads `cardhub guide`, adds the rule with `--no-open` (so it uses the CardHub you have open instead of starting another), waits in the background, and handles each card as CardHub reports it. Name the project when more than one board is open.
 
