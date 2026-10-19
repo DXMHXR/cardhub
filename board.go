@@ -106,13 +106,13 @@ func (m model) boardView(h int) string {
 				break
 			}
 			if c > 0 {
-				parts = append(parts, m.hFlow(boxH, i-1, m.columns[i].color))
+				parts = append(parts, m.hFlow(boxH, i-1, ghColor(m.columns[i].color)))
 			}
 			parts = append(parts, m.columnBox(i, boxW, lay))
 		}
 		out = append(out, lipgloss.JoinHorizontal(lipgloss.Top, parts...))
 		if r < rows-1 {
-			out = append(out, m.wrapFlow(fit, boxW, (r+1)*fit-1, m.columns[(r+1)*fit].color))
+			out = append(out, m.wrapFlow(fit, boxW, (r+1)*fit-1, ghColor(m.columns[(r+1)*fit].color)))
 		}
 	}
 	if hidden := rows - shown; hidden > 0 {
@@ -232,8 +232,8 @@ func (m model) columnBox(ci, w int, lay boxLayout) string {
 
 // marching renders a dotted lane of width w whose bright dots move toward dir
 // (+1 right, -1 left). With head given, the dot at that index is white.
-func (m model) marching(w, dir int, color string, head ...int) string {
-	lit := lipgloss.NewStyle().Foreground(ghColor(color)).Bold(true)
+func (m model) marching(w, dir int, color lipgloss.Color, head ...int) string {
+	lit := lipgloss.NewStyle().Foreground(color).Bold(true)
 	var b strings.Builder
 	for i := 0; i < w; i++ {
 		if len(head) > 0 && i == head[0] {
@@ -305,7 +305,7 @@ var whiteDot = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Bold(tr
 // busyDots renders a lit lane: the idle dotted lane with one white dot
 // streaming along it toward dir. When it reaches the end the next one starts
 // over; long lanes stream faster so every loop takes about as long.
-func (m model) busyDots(w, dir int, color string) string {
+func (m model) busyDots(w, dir int, color lipgloss.Color) string {
 	if w <= 0 {
 		return ""
 	}
@@ -319,12 +319,12 @@ func (m model) busyDots(w, dir int, color string) string {
 // hFlow is the connector between columns k and k+1 on the same grid row.
 // Idle it's a dotted lane toward the next column; after a card crosses it, a
 // white dot streams along it in the move's direction.
-func (m model) hFlow(h, k int, toColor string) string {
+func (m model) hFlow(h, k int, toColor lipgloss.Color) string {
 	lines := make([]string, h)
 	for i := range lines {
 		lines[i] = strings.Repeat(" ", gapW)
 	}
-	head := lipgloss.NewStyle().Foreground(ghColor(toColor))
+	head := lipgloss.NewStyle().Foreground(toColor)
 	switch n, dir := m.traffic(k); {
 	case n == 0:
 		lines[h/2] = m.marching(gapW-1, 1, toColor) + head.Render("▸")
@@ -339,10 +339,10 @@ func (m model) hFlow(h, k int, toColor string) string {
 // wrapFlow is the connector from the last box of a grid row (column k) back to
 // the first box of the next row: ╯ under the last box, a lane running left, ╭
 // down into the next. It streams like hFlow when cards cross it.
-func (m model) wrapFlow(fit, boxW, k int, toColor string) string {
+func (m model) wrapFlow(fit, boxW, k int, toColor lipgloss.Color) string {
 	x0 := boxW / 2
 	n, dir := m.traffic(k)
-	edge := lipgloss.NewStyle().Foreground(ghColor(toColor))
+	edge := lipgloss.NewStyle().Foreground(toColor)
 	if fit == 1 {
 		arrow := "▼"
 		if dir < 0 {

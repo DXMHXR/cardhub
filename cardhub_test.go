@@ -292,3 +292,25 @@ func TestNewer(t *testing.T) {
 		}
 	}
 }
+
+func TestDistinctColors(t *testing.T) {
+	cols := []column{{name: "Backlog", color: "GRAY"}, {name: "Todo", color: "BLUE"}, {name: "Doing", color: "BLUE"},
+		{name: "Review", color: ""}, {name: "QA", color: "GREEN"}, {name: "Done", color: "GRAY"}}
+	distinctColors(cols)
+	seen := map[string]string{}
+	for _, c := range cols {
+		if c.color == "GRAY" || ghColors[c.color] == "" {
+			t.Errorf("%s got %q: want a real, non-grey colour", c.name, c.color)
+		}
+		if other, ok := seen[c.color]; ok {
+			t.Errorf("%s and %s share %s", other, c.name, c.color)
+		}
+		seen[c.color] = c.name
+	}
+	if cols[1].color != "BLUE" {
+		t.Errorf("a column with a unique GitHub colour should keep it: %+v", cols)
+	}
+	if cols[5].color != "GREEN" || cols[4].color == "GREEN" {
+		t.Errorf("only the last column (done) should be green: %+v", cols)
+	}
+}

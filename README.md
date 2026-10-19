@@ -188,7 +188,7 @@ Add `--board "Roadmap"` when more than one board is open. `cardhub notify -h` li
 
 ### Board
 
-Columns sit side by side while they fit and wrap onto new rows when they don't. The selected column has a bold border in its colour, and the selected card a light-grey bar. The header shows the project, view, version and whether CardHub is live, paused or stale. The footer shows when the next refresh is due, the API budget, the AI link and the shortcuts.
+Columns sit side by side while they fit and wrap onto new rows when they don't. Every column gets its own colour so they're easy to tell apart: it keeps the one picked on GitHub unless another column already has it or it's grey, and the last column, where work ends, is always green. The selected column has a bold border in its colour, and the selected card a light-grey bar. The header shows the project, view, version and whether CardHub is live, paused or stale. The footer shows when the next refresh is due, the API budget, the AI link and the shortcuts.
 
 ![Saved view menu over the board](docs/views.png)
 

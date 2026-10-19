@@ -596,6 +596,7 @@ func (m *model) rebuild() {
 		}
 		cols = append(cols, column{name: name, color: color, total: m.board.Totals[name]})
 	}
+	distinctColors(cols)
 	for _, it := range m.board.Items {
 		if i, ok := idx[colName(it, m.groupField)]; ok {
 			cols[i].items = append(cols[i].items, it)
@@ -812,9 +813,50 @@ func openURL(u string) {
 
 // ---- styles ----
 
+// ghColors are the colours GitHub lets you pick for a column, plus a few more
+// CardHub hands out (TEAL…) so every column on the board can get its own.
 var ghColors = map[string]string{
 	"GRAY": "#8b949e", "BLUE": "#58a6ff", "GREEN": "#3fb950", "YELLOW": "#d29922",
 	"ORANGE": "#db6d28", "RED": "#f85149", "PINK": "#db61a2", "PURPLE": "#a371f7",
+	"TEAL": "#39c5cf", "LIME": "#a3d34a", "INDIGO": "#7c83ff", "BROWN": "#b0784a",
+}
+
+// columnColors is the order spare colours are handed out in.
+var columnColors = []string{"BLUE", "GREEN", "YELLOW", "ORANGE", "RED", "PINK", "PURPLE", "TEAL", "LIME", "INDIGO", "BROWN"}
+
+// distinctColors gives every column its own colour, so columns are easy to
+// tell apart and none is grey (grey would blur with the flow lines' dim dots
+// and white "card moving" dot). The last column, where work ends, is always
+// green: done. Every other column keeps the colour picked on GitHub unless
+// it's grey, green or an earlier column already has it; those get the next
+// unused colour. Past len(columnColors) columns, colours repeat.
+func distinctColors(cols []column) {
+	if len(cols) == 0 {
+		return
+	}
+	used := map[string]bool{"GREEN": true}
+	keep := make([]bool, len(cols))
+	cols[len(cols)-1].color, keep[len(cols)-1] = "GREEN", true
+	for i, c := range cols[:len(cols)-1] {
+		if _, ok := ghColors[c.color]; ok && c.color != "GRAY" && !used[c.color] {
+			used[c.color], keep[i] = true, true
+		}
+	}
+	next := 0
+	for i := range cols {
+		if keep[i] {
+			continue
+		}
+		for next < len(columnColors) && used[columnColors[next]] {
+			next++
+		}
+		if next < len(columnColors) {
+			cols[i].color = columnColors[next]
+			used[columnColors[next]] = true
+		} else {
+			cols[i].color = columnColors[i%len(columnColors)]
+		}
+	}
 }
 
 func ghColor(c string) lipgloss.Color {
