@@ -412,6 +412,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if time.Now().After(m.nextRules) { // AI watchers have their own timer, unaffected by pause
 			cmds = append(cmds, m.checkRules())
 		}
+		m.hub.Retake()
 		m.hub.Prune(idleAfter)
 		if len(cmds) > 0 {
 			return m, tea.Batch(append(cmds, tick())...)
@@ -891,6 +892,11 @@ func (m model) headerView() string {
 	} else {
 		live = dim.Render(versionLabel())
 	}
+	// another cardhub has the AI link for this project: say so up top
+	if m.owner != "" && m.hub.Status().Conflict != "" {
+		badge := lipgloss.NewStyle().Foreground(lipgloss.Color("#d29922")).Bold(true).Render("⚠ AI LINK ELSEWHERE")
+		live = badge + "  " + live
+	}
 	name := titleBar.Render(trunc(title, max(6, m.width-lipgloss.Width(live)-6)))
 	line := lipgloss.JoinHorizontal(lipgloss.Center,
 		name, strings.Repeat(" ", max(1, m.width-lipgloss.Width(name)-lipgloss.Width(live))), live)
@@ -1015,14 +1021,22 @@ func untilLabel(d time.Duration) string {
 // linkBody describes the AI watchers for the footer box: "ready · 0 rules ·
 // ○ no agent waiting", later "2 boards · 3 rules · 10 sent · ● 1 agent waiting".
 // The accent turns green while an agent is listening.
-func (m model) linkBody() (string, lipgloss.Color, bool) {
+func (m model) linkBody() ([]string, lipgloss.Color, bool) {
 	st := m.hub.Status()
-	grey, green := lipgloss.Color("#8b949e"), lipgloss.Color("#3fb950")
-	if st.Conflict != "" && m.owner != "" && st.Boards == 0 {
-		return ftLabel.Render(st.Conflict), lipgloss.Color("#d29922"), true
+	if st.Conflict != "" && m.owner != "" {
+		yellow := lipgloss.Color("#d29922")
+		warn := []string{lipgloss.NewStyle().Foreground(yellow).Bold(true).Render("⚠ " + st.Conflict)}
+		lines, _, _ := m.linkSummary(st)
+		return append(warn, lines...), yellow, true
 	}
+	return m.linkSummary(st)
+}
+
+// linkSummary is linkBody for the watchers this cardhub does serve.
+func (m model) linkSummary(st hubStatus) ([]string, lipgloss.Color, bool) {
+	grey, green := lipgloss.Color("#8b949e"), lipgloss.Color("#3fb950")
 	if st.Boards == 0 {
-		return "", grey, false
+		return nil, grey, false
 	}
 	var parts []string
 	if st.Boards > 1 {
@@ -1043,7 +1057,7 @@ func (m model) linkBody() (string, lipgloss.Color, bool) {
 		}
 		agent, accent = lipgloss.NewStyle().Foreground(green).Render("●")+" "+ftLabel.Render(label), green
 	}
-	return ftLabel.Render(strings.Join(parts, " · ")) + dim.Render(" · ") + agent, accent, true
+	return []string{ftLabel.Render(strings.Join(parts, " · ")) + dim.Render(" · ") + agent}, accent, true
 }
 
 // everyLabel shows the sync interval, marking it "auto" when it was stretched.
@@ -1083,8 +1097,8 @@ func (m model) footerView() string {
 		body, accent := apiMeter(m.board.RateLimit)
 		boxes = append(boxes, footBox{title: "API budget", accent: accent, lines: []string{body}})
 	}
-	if body, accent, ok := m.linkBody(); ok {
-		boxes = append(boxes, footBox{title: "AI link", accent: accent, lines: []string{body}})
+	if lines, accent, ok := m.linkBody(); ok {
+		boxes = append(boxes, footBox{title: "AI link", accent: accent, lines: lines})
 	}
 
 	// Tab cycles the screens; name the one it goes to

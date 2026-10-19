@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -162,5 +164,35 @@ func TestHubWatchersOutliveTheScreen(t *testing.T) {
 	}
 	if alive(pathA) {
 		t.Error("A's socket should be gone")
+	}
+}
+
+func TestSecondCardhubWarnsThenTakesOver(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "ch")
+	if err != nil {
+		t.Skip("no /tmp:", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Setenv("CARDHUB_SOCKET_DIR", dir)
+
+	first, second := NewHub(nil), NewHub(nil)
+	t.Cleanup(func() { first.StopAll("test over"); second.StopAll("test over") })
+	first.Show("acme", 1)
+	second.Show("acme", 1)
+
+	m := newModel(nil, "acme", 1, time.Minute, "", "")
+	m.width, m.hub = 100, second
+	if c := second.Status().Conflict; !strings.Contains(c, fmt.Sprintf("PID %d", os.Getpid())) {
+		t.Fatalf("conflict should name the other cardhub's PID, got %q", c)
+	}
+	if !strings.Contains(m.headerView(), "AI LINK ELSEWHERE") || !strings.Contains(m.footerView(), "is already connected to acme/1") {
+		t.Errorf("warning missing:\n%s\n%s", m.headerView(), m.footerView())
+	}
+	t.Log("\n" + m.headerView() + m.footerView())
+
+	first.StopAll("closed")
+	second.Retake()
+	if st := second.Status(); st.Conflict != "" || st.Boards != 1 {
+		t.Errorf("second cardhub should take over the AI link, got %+v", st)
 	}
 }

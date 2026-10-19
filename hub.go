@@ -75,6 +75,21 @@ func (h *Hub) Watch(owner string, number int) error {
 	return nil
 }
 
+// Retake tries again to serve the on-screen project when another cardhub had
+// it, so this one picks up the AI link as soon as that one closes.
+func (h *Hub) Retake() {
+	n := h.Screen()
+	if n == nil {
+		return
+	}
+	if st := n.Status(); st.Conflict != "" {
+		n.Serve(n.owner, n.number)
+		if st := n.Status(); st.Active && n.changed != nil {
+			go n.changed(false)
+		}
+	}
+}
+
 // Get returns the watcher for owner/number, or nil.
 func (h *Hub) Get(owner string, number int) *Notifier {
 	if h == nil {

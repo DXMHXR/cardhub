@@ -12,8 +12,9 @@ import (
 // Board layout: columns sit side by side while they fit and wrap into further
 // grid rows when they don't, in workflow order (left→right, then next row).
 // Animated dotted connectors between boxes show the direction work flows.
-// On a short screen the boxes shrink (fewer cards each, then no cards at all)
-// so the whole flow stays in view before grid rows start to scroll.
+// On a short screen the boxes shrink (fewer cards each, then one line per
+// card, then no cards at all) so the whole flow stays in view before grid
+// rows start to scroll.
 
 const (
 	visibleCards = 3  // most cards shown per column; the rest scroll
@@ -23,31 +24,46 @@ const (
 	animEvery    = 150 * time.Millisecond
 )
 
-// boxInnerH is a box's inner height showing vis cards: header + rule + cards
-// (with a blank line between) + scroll line. With no cards it's just the header.
-func boxInnerH(vis int) int {
-	if vis == 0 {
-		return 1
-	}
-	return 2 + vis*cardLines + (vis - 1) + 1
+// boxLayout is how much of each column a box shows: vis cards, each in full
+// (title, repo, labels) or compact (just the title line).
+type boxLayout struct {
+	vis     int
+	compact bool
 }
 
-// cardsFit is how many cards each column shows so all rows of a grid fit
-// in h lines: from visibleCards down to 0 (headers only).
-func cardsFit(h, rows int) int {
-	for vis := visibleCards; vis > 0; vis-- {
-		if rows*(boxInnerH(vis)+2)+(rows-1) <= h {
-			return vis
+// layouts from roomiest to smallest. One full card is left out: three
+// compact ones take the same height.
+var layouts = []boxLayout{{3, false}, {2, false}, {3, true}, {2, true}, {1, true}, {0, true}}
+
+// innerH is a box's inner height. Full: header + rule + cards (with a blank
+// line between) + scroll line. Compact: header (whose count shows the scroll
+// position) + a line per card. With no cards it's just the header.
+func (l boxLayout) innerH() int {
+	switch {
+	case l.vis == 0:
+		return 1
+	case l.compact:
+		return 1 + l.vis
+	}
+	return 2 + l.vis*cardLines + (l.vis - 1) + 1
+}
+
+// layoutFit is the roomiest layout that fits all rows of a grid in h lines,
+// or headers only when none does.
+func layoutFit(h, rows int) boxLayout {
+	for _, l := range layouts {
+		if rows*(l.innerH()+2)+(rows-1) <= h {
+			return l
 		}
 	}
-	return 0
+	return layouts[len(layouts)-1]
 }
 
 // shownCards is how many cards per column the board on screen shows.
 func (m model) shownCards() int {
 	n := len(m.columns)
 	fit := gridFit(m.width, n)
-	return cardsFit(m.boardH(), (n+fit-1)/max(1, fit))
+	return layoutFit(m.boardH(), (n+fit-1)/max(1, fit)).vis
 }
 
 type animMsg struct{}
@@ -72,8 +88,8 @@ func (m model) boardView(h int) string {
 	fit := gridFit(m.width, n)
 	boxW := (m.width - (fit-1)*gapW) / fit
 	rows := (n + fit - 1) / fit
-	vis := cardsFit(h, rows)
-	boxH := boxInnerH(vis) + 2
+	lay := layoutFit(h, rows)
+	boxH := lay.innerH() + 2
 
 	// how many grid rows fit; keep the selected column's row on screen
 	rowH := boxH + 1 // +1 for the wrap connector under each row
@@ -92,7 +108,7 @@ func (m model) boardView(h int) string {
 			if c > 0 {
 				parts = append(parts, m.hFlow(boxH, i-1, m.columns[i].color))
 			}
-			parts = append(parts, m.columnBox(i, boxW, vis))
+			parts = append(parts, m.columnBox(i, boxW, lay))
 		}
 		out = append(out, lipgloss.JoinHorizontal(lipgloss.Top, parts...))
 		if r < rows-1 {
@@ -101,7 +117,7 @@ func (m model) boardView(h int) string {
 	}
 	if hidden := rows - shown; hidden > 0 {
 		hint := "↑↓ past a column's end moves between rows"
-		if vis == 0 {
+		if lay.vis == 0 {
 			hint = "↑↓ moves between rows"
 		}
 		out = append(out, dim.Render(fmt.Sprintf(" grid rows %d–%d of %d · %s", first+1, first+shown, rows, hint)))
@@ -109,7 +125,8 @@ func (m model) boardView(h int) string {
 	return strings.Join(out, "\n")
 }
 
-func (m model) columnBox(ci, w, vis int) string {
+func (m model) columnBox(ci, w int, lay boxLayout) string {
+	vis := lay.vis
 	c := m.columns[ci]
 	sel := ci == m.col
 	inner := w - 4 // border + padding
@@ -120,6 +137,14 @@ func (m model) columnBox(ci, w, vis int) string {
 		nameSt = bold.Foreground(color)
 	}
 	count := dim.Render(fmt.Sprint(c.total))
+	if lay.compact && lay.vis > 0 && c.total > lay.vis { // no scroll line: the count says where
+		off := clamp(m.offsets[c.name], 0, max(0, min(c.total, 100)-lay.vis))
+		pos := fmt.Sprint(off + 1)
+		if lay.vis > 1 {
+			pos += fmt.Sprintf("–%d", min(off+lay.vis, c.total))
+		}
+		count = dim.Render(pos + "/" + fmt.Sprint(c.total))
+	}
 	name := lipgloss.NewStyle().Foreground(color).Render("●") + " " +
 		nameSt.Render(trunc(c.name, inner-lipgloss.Width(count)-3))
 	head := name + strings.Repeat(" ", max(1, inner-lipgloss.Width(name)-lipgloss.Width(count))) + count
@@ -149,21 +174,31 @@ func (m model) columnBox(ci, w, vis int) string {
 	for i := off; i < off+vis; i++ {
 		switch {
 		case i < len(c.items):
-			cards = append(cards, strings.TrimSuffix(m.cardView(c.items[i], inner, sel && i == m.row), "\n"))
+			card := strings.TrimSuffix(m.cardView(c.items[i], inner, sel && i == m.row), "\n")
+			if lay.compact { // the title line only
+				card, _, _ = strings.Cut(card, "\n")
+			}
+			cards = append(cards, card)
 		case i < reach: // scrolled onto cards the next sync is fetching
-			cards = append(cards, " "+m.spin.View()+dim.Render(" loading…")+strings.Repeat("\n", cardLines-1))
+			cards = append(cards, " "+m.spin.View()+dim.Render(" loading…")+strings.Repeat("\n", pick(lay.compact, 0, cardLines-1)))
 		default:
-			cards = append(cards, strings.Repeat("\n", cardLines-1))
+			cards = append(cards, strings.Repeat("\n", pick(lay.compact, 0, cardLines-1)))
 		}
 	}
-	body := strings.Join(cards, "\n\n")
+	body := strings.Join(cards, pick(lay.compact, "\n", "\n\n"))
+	ih := lay.innerH()
+	top := []string{head, rule}
+	if lay.compact { // no title rule: every line goes to cards
+		top = top[:1]
+	}
 	if c.total == 0 {
 		// an empty column has no scroll line: centre the scene in everything
-		// between the title rule and the bottom border
-		if m.settings.Pets {
-			body = m.emptyState(ci, c, inner, boxInnerH(vis)-2, sel)
+		// between the title rule and the bottom border (too little room for
+		// a pet in compact boxes)
+		if m.settings.Pets && !lay.compact {
+			body = m.emptyState(ci, c, inner, ih-len(top), sel)
 		} else {
-			body = noTask(inner, boxInnerH(vis)-2) // the default
+			body = noTask(inner, ih-len(top)) // the default
 		}
 	}
 
@@ -186,9 +221,8 @@ func (m model) columnBox(ci, w, vis int) string {
 		scroll = dim.Render(l + strings.Repeat(" ", gap/2) + pos + strings.Repeat(" ", gap-gap/2) + r)
 	}
 
-	content := lipgloss.JoinVertical(lipgloss.Left, head, rule, body)
-	ih := boxInnerH(vis)
-	if c.total == 0 {
+	content := lipgloss.JoinVertical(lipgloss.Left, append(top, body)...)
+	if c.total == 0 || lay.compact {
 		content = lipgloss.NewStyle().Height(ih).MaxHeight(ih).Render(content)
 	} else {
 		content = lipgloss.NewStyle().Height(ih-1).MaxHeight(ih-1).Render(content) + "\n" + scroll

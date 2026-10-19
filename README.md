@@ -218,6 +218,8 @@ Exit codes: `0` ok · `1` error · `2` usage · `3` watcher stopped (CardHub qui
 
 **Stopping watchers:** quitting CardHub stops all of them, and every waiting agent is told. `X` on the AI link screen stops one after asking. Watchers for projects not on screen close by themselves after a minute with no rules and no agent.
 
+**Two CardHubs on one project:** only the first one opened has the AI link; agents always talk to it. A second one shows **⚠ AI LINK ELSEWHERE** in its header and says in the footer which one (by PID) is connected.
+
 Rules are checked on their own timer against the whole project, whatever is on screen: about 1 API point per watched project per check, covering each rule's first 50 matches. CardHub only reads: agents change cards with their own tools (for example `gh project item-edit`).
 
 **Example agent instructions:**

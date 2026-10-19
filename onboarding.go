@@ -159,7 +159,7 @@ func runDoctor() int {
 	return exit
 }
 
-func pick(cond bool, a, b string) string {
+func pick[T any](cond bool, a, b T) T {
 	if cond {
 		return a
 	}

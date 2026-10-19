@@ -88,6 +88,7 @@ type response struct {
 	Sent    int           `json:"sent,omitempty"`
 	Waiting bool          `json:"waiting,omitempty"`
 	Stopped bool          `json:"stopped,omitempty"` // the watcher quit or switched board
+	PID     int           `json:"pid,omitempty"`     // ping: the serving cardhub's process
 }
 
 // Notifier is the watcher for one project. The TUI evaluates its rules on a
@@ -157,7 +158,11 @@ func (n *Notifier) serveAt(path, board string) {
 	defer n.mu.Unlock()
 	n.conflict = ""
 	if alive(path) {
-		n.conflict = "another CardHub is already watching " + board + " for AI agents"
+		who := "another CardHub"
+		if resp, err := call(path, request{Op: "ping"}); err == nil && resp.PID > 0 {
+			who = fmt.Sprintf("another CardHub (PID %d)", resp.PID)
+		}
+		n.conflict = who + " is already connected to " + board + " for AI agents"
 		return
 	}
 	_ = os.MkdirAll(filepath.Dir(path), 0o700)
@@ -266,7 +271,7 @@ func (n *Notifier) do(req request) response {
 	n.lastActive = time.Now()
 	switch req.Op {
 	case "ping":
-		return response{OK: true, Board: n.board, Title: n.title}
+		return response{OK: true, Board: n.board, Title: n.title, PID: os.Getpid()}
 	case "add":
 		if req.Filter == "" {
 			return response{Error: "empty filter"}
