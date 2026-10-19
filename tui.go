@@ -333,7 +333,7 @@ func (m model) needsMore() bool {
 		return false
 	}
 	c := m.columns[m.col]
-	end := min(m.offsets[c.name]+visibleCards, c.total, 100)
+	end := min(m.offsets[c.name]+max(1, m.shownCards()), c.total, 100)
 	return len(c.items) < end
 }
 
@@ -587,15 +587,16 @@ func (m *model) clampCursor() {
 	m.col = clamp(m.col, 0, len(m.columns)-1)
 	c := m.columns[m.col]
 	m.row = clamp(m.row, 0, max(0, min(c.total, 100)-1)) // windowed columns load at most 100
-	// scroll the column's 3-card window just enough to keep the cursor visible
+	// scroll the column's card window just enough to keep the cursor visible
+	vis := max(1, m.shownCards())
 	off := m.offsets[c.name]
 	if m.row < off {
 		off = m.row
 	}
-	if m.row >= off+visibleCards {
-		off = m.row - visibleCards + 1
+	if m.row >= off+vis {
+		off = m.row - vis + 1
 	}
-	m.offsets[c.name] = clamp(off, 0, max(0, min(c.total, 100)-visibleCards))
+	m.offsets[c.name] = clamp(off, 0, max(0, min(c.total, 100)-vis))
 	m.cursors[c.name] = m.row
 }
 
@@ -672,7 +673,8 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveCol(m.col + 1)
 	case "up", "k":
 		// scroll within the column; past the top, jump to the column above in the grid
-		if fit := gridFit(m.width, len(m.columns)); m.row == 0 && m.col-fit >= 0 {
+		// with no cards on screen (short terminal) ↑↓ only move between rows
+		if fit := gridFit(m.width, len(m.columns)); (m.row == 0 || m.shownCards() == 0) && m.col-fit >= 0 {
 			m.moveCol(m.col - fit)
 		} else {
 			m.row--
@@ -681,7 +683,7 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.loadMore()
 	case "down", "j":
 		if fit := gridFit(m.width, len(m.columns)); m.col < len(m.columns) &&
-			m.row >= min(m.columns[m.col].total, 100)-1 && m.col+fit < len(m.columns) {
+			(m.row >= min(m.columns[m.col].total, 100)-1 || m.shownCards() == 0) && m.col+fit < len(m.columns) {
 			m.moveCol(m.col + fit)
 		} else {
 			m.row++
@@ -853,6 +855,11 @@ func (m model) View() string {
 		return overlay(screen, m.pickerBox(m.height-4), m.width, m.height)
 	}
 	return screen
+}
+
+// boardH is the height left for the board between header and footer.
+func (m model) boardH() int {
+	return m.height - lipgloss.Height(m.headerView()) - lipgloss.Height(m.footerView())
 }
 
 func (m model) headerView() string {

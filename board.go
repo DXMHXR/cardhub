@@ -12,17 +12,43 @@ import (
 // Board layout: columns sit side by side while they fit and wrap into further
 // grid rows when they don't, in workflow order (left→right, then next row).
 // Animated dotted connectors between boxes show the direction work flows.
+// On a short screen the boxes shrink (fewer cards each, then no cards at all)
+// so the whole flow stays in view before grid rows start to scroll.
 
 const (
-	visibleCards = 3  // cards shown per column; the rest scroll
+	visibleCards = 3  // most cards shown per column; the rest scroll
 	minBoxW      = 30 // narrowest a column box may get before wrapping
 	gapW         = 5  // horizontal connector between boxes
 	cardLines    = 3
 	animEvery    = 150 * time.Millisecond
 )
 
-// inner height: header + rule + cards (with a blank line between) + scroll line
-var boxInnerH = 2 + visibleCards*cardLines + (visibleCards - 1) + 1
+// boxInnerH is a box's inner height showing vis cards: header + rule + cards
+// (with a blank line between) + scroll line. With no cards it's just the header.
+func boxInnerH(vis int) int {
+	if vis == 0 {
+		return 1
+	}
+	return 2 + vis*cardLines + (vis - 1) + 1
+}
+
+// cardsFit is how many cards each column shows so all rows of a grid fit
+// in h lines: from visibleCards down to 0 (headers only).
+func cardsFit(h, rows int) int {
+	for vis := visibleCards; vis > 0; vis-- {
+		if rows*(boxInnerH(vis)+2)+(rows-1) <= h {
+			return vis
+		}
+	}
+	return 0
+}
+
+// shownCards is how many cards per column the board on screen shows.
+func (m model) shownCards() int {
+	n := len(m.columns)
+	fit := gridFit(m.width, n)
+	return cardsFit(m.boardH(), (n+fit-1)/max(1, fit))
+}
 
 type animMsg struct{}
 
@@ -45,8 +71,9 @@ func (m model) boardView(h int) string {
 	}
 	fit := gridFit(m.width, n)
 	boxW := (m.width - (fit-1)*gapW) / fit
-	boxH := boxInnerH + 2
 	rows := (n + fit - 1) / fit
+	vis := cardsFit(h, rows)
+	boxH := boxInnerH(vis) + 2
 
 	// how many grid rows fit; keep the selected column's row on screen
 	rowH := boxH + 1 // +1 for the wrap connector under each row
@@ -65,7 +92,7 @@ func (m model) boardView(h int) string {
 			if c > 0 {
 				parts = append(parts, m.hFlow(boxH, i-1, m.columns[i].color))
 			}
-			parts = append(parts, m.columnBox(i, boxW))
+			parts = append(parts, m.columnBox(i, boxW, vis))
 		}
 		out = append(out, lipgloss.JoinHorizontal(lipgloss.Top, parts...))
 		if r < rows-1 {
@@ -73,12 +100,16 @@ func (m model) boardView(h int) string {
 		}
 	}
 	if hidden := rows - shown; hidden > 0 {
-		out = append(out, dim.Render(fmt.Sprintf(" grid rows %d–%d of %d · ↑↓ past a column's end moves between rows", first+1, first+shown, rows)))
+		hint := "↑↓ past a column's end moves between rows"
+		if vis == 0 {
+			hint = "↑↓ moves between rows"
+		}
+		out = append(out, dim.Render(fmt.Sprintf(" grid rows %d–%d of %d · %s", first+1, first+shown, rows, hint)))
 	}
 	return strings.Join(out, "\n")
 }
 
-func (m model) columnBox(ci, w int) string {
+func (m model) columnBox(ci, w, vis int) string {
 	c := m.columns[ci]
 	sel := ci == m.col
 	inner := w - 4 // border + padding
@@ -99,11 +130,23 @@ func (m model) columnBox(ci, w int) string {
 	}
 	rule := lipgloss.NewStyle().Foreground(color).Faint(!sel).Render(strings.Repeat(ruleCh, inner))
 
+	border := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#30363d")).
+		Padding(0, 1).
+		Width(w - 2)
+	if sel {
+		border = border.Border(lipgloss.ThickBorder()).BorderForeground(color)
+	}
+	if vis == 0 { // too short for cards: just the column and its count
+		return border.Render(head)
+	}
+
 	// windowed boards load at most the first 100 cards of a column
 	reach := min(c.total, 100)
-	off := clamp(m.offsets[c.name], 0, max(0, reach-visibleCards))
+	off := clamp(m.offsets[c.name], 0, max(0, reach-vis))
 	var cards []string
-	for i := off; i < off+visibleCards; i++ {
+	for i := off; i < off+vis; i++ {
 		switch {
 		case i < len(c.items):
 			cards = append(cards, strings.TrimSuffix(m.cardView(c.items[i], inner, sel && i == m.row), "\n"))
@@ -118,17 +161,20 @@ func (m model) columnBox(ci, w int) string {
 		// an empty column has no scroll line: centre the scene in everything
 		// between the title rule and the bottom border
 		if m.settings.Pets {
-			body = m.emptyState(ci, c, inner, boxInnerH-2, sel)
+			body = m.emptyState(ci, c, inner, boxInnerH(vis)-2, sel)
 		} else {
-			body = noTask(inner, boxInnerH-2) // the default
+			body = noTask(inner, boxInnerH(vis)-2) // the default
 		}
 	}
 
 	// scroll indicator: ▲ hidden above · position · ▼ hidden below
 	var scroll string
-	if c.total > visibleCards {
-		up, down := off, c.total-off-visibleCards
-		pos := fmt.Sprintf("%d–%d of %d", off+1, off+visibleCards, c.total)
+	if c.total > vis {
+		up, down := off, c.total-off-vis
+		pos := fmt.Sprintf("%d–%d of %d", off+1, off+vis, c.total)
+		if vis == 1 {
+			pos = fmt.Sprintf("%d of %d", off+1, c.total)
+		}
 		l, r := "  ", "  "
 		if up > 0 {
 			l = fmt.Sprintf("▲ %d", up)
@@ -141,19 +187,11 @@ func (m model) columnBox(ci, w int) string {
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, head, rule, body)
+	ih := boxInnerH(vis)
 	if c.total == 0 {
-		content = lipgloss.NewStyle().Height(boxInnerH).MaxHeight(boxInnerH).Render(content)
+		content = lipgloss.NewStyle().Height(ih).MaxHeight(ih).Render(content)
 	} else {
-		content = lipgloss.NewStyle().Height(boxInnerH-1).MaxHeight(boxInnerH-1).Render(content) + "\n" + scroll
-	}
-
-	border := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#30363d")).
-		Padding(0, 1).
-		Width(w - 2)
-	if sel {
-		border = border.Border(lipgloss.ThickBorder()).BorderForeground(color)
+		content = lipgloss.NewStyle().Height(ih-1).MaxHeight(ih-1).Render(content) + "\n" + scroll
 	}
 	return border.Render(content)
 }
