@@ -8,7 +8,7 @@ import (
 
 // version is CardHub's release number. Release builds can stamp it with
 // -ldflags "-X main.version=1.2.3"; bump it here for each release.
-var version = "0.3.0"
+var version = "0.3.1"
 
 // versionLabel is what the interface shows: "v" and the number, e.g. "v0.1.0".
 // A copy installed from a tagged release (go install …@v0.2.0) shows that tag.
