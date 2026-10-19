@@ -1065,12 +1065,13 @@ func flow(entries []string, width int, gap string) []string {
 }
 
 // apiMeter shows how much of the hourly API budget is used, like a context-window
-// meter: a bar that fills (green → yellow → red) as the budget is spent.
+// meter: a grey bar that fills as the budget is spent, and a % that turns
+// green → yellow → red.
 // It comes in ever shorter versions for narrow screens: a shorter bar, then a
 // circle that fills (○ ◔ ◑ ◕ ●), then without the count left.
-func apiMeter(rl RateLimit) ([]string, lipgloss.Color) {
+func apiMeter(rl RateLimit) []string {
 	if rl.Limit <= 0 {
-		return []string{ftLabel.Render("–")}, lipgloss.Color("#8b949e")
+		return []string{ftLabel.Render("–")}
 	}
 	used := clamp(rl.Limit-rl.Remaining, 0, rl.Limit)
 	frac := float64(used) / float64(rl.Limit)
@@ -1087,7 +1088,7 @@ func apiMeter(rl RateLimit) ([]string, lipgloss.Color) {
 		if used > 0 && fill == 0 {
 			fill = 1
 		}
-		return st.Render(strings.Repeat("█", fill)) + ftRule.Render(strings.Repeat("░", w-fill))
+		return ftLabel.Render(strings.Repeat("█", fill)) + ftRule.Render(strings.Repeat("░", w-fill))
 	}
 	circle := []string{"○", "◔", "◑", "◕", "●"}[int(frac*4+0.5)]
 	if used > 0 && circle == "○" {
@@ -1109,9 +1110,9 @@ func apiMeter(rl RateLimit) ([]string, lipgloss.Color) {
 	return []string{
 		bar(10) + " " + pct + sep + left + reset,
 		bar(5) + " " + pct + sep + left + resetShort,
-		st.Render(circle) + " " + pct + sep + leftShort + resetShort,
-		st.Render(circle) + " " + pct + resetShort,
-	}, color
+		ftLabel.Render(circle) + " " + pct + sep + leftShort + resetShort,
+		ftLabel.Render(circle) + " " + pct + resetShort,
+	}
 }
 
 // untilLabel formats a countdown compactly: 45s, 37m, 1h05m.
@@ -1126,14 +1127,21 @@ func untilLabel(d time.Duration) string {
 	}
 }
 
+// Footer box titles keep one colour each: Sync blue, API budget yellow, AI
+// link purple (the budget meter itself still turns yellow, then red).
+var (
+	budgetAccent = lipgloss.Color("#d29922")
+	linkAccent   = lipgloss.Color("#a371f7")
+)
+
 // linkBody describes the AI watchers for the footer box: "ready · 0 rules ·
 // ○ no agent waiting", later "2 boards · 3 rules · 10 sent · ● 1 agent waiting".
-// The accent turns green while an agent is listening.
+// The dot is the agent status (see statusDot).
 func (m model) linkBody() (footBox, bool) {
 	st := m.hub.Status()
 	if st.Conflict != "" && m.owner != "" {
 		yellow := lipgloss.NewStyle().Foreground(lipgloss.Color("#d29922")).Bold(true)
-		b := footBox{title: "AI link", accent: lipgloss.Color("#d29922"),
+		b := footBox{title: "AI link", accent: linkAccent,
 			lines: []string{yellow.Render("⚠ " + st.Conflict)},
 			alts:  []string{yellow.Render("⚠ another CardHub has the AI link")}}
 		if more, ok := m.linkSummary(st); ok {
@@ -1146,7 +1154,6 @@ func (m model) linkBody() (footBox, bool) {
 
 // linkSummary is linkBody for the watchers this cardhub does serve.
 func (m model) linkSummary(st hubStatus) (footBox, bool) {
-	grey, green := lipgloss.Color("#8b949e"), lipgloss.Color("#3fb950")
 	if st.Boards == 0 {
 		return footBox{}, false
 	}
@@ -1163,18 +1170,18 @@ func (m model) linkSummary(st hubStatus) (footBox, bool) {
 		parts = append(parts, fmt.Sprintf("%d queued", st.Queued))
 		short = append(short, fmt.Sprintf("%d queued", st.Queued))
 	}
-	dot, label, shortLabel, accent := ftRule.Render("○"), "no agent waiting", "no agent", grey
+	dot, label, shortLabel := statusDot(false, st.Queued), "no agent waiting", "no agent"
 	if st.Waiting > 0 {
 		label, shortLabel = "agent waiting", "waiting"
 		if st.Waiting > 1 {
 			label, shortLabel = fmt.Sprintf("%d agents waiting", st.Waiting), fmt.Sprintf("%d waiting", st.Waiting)
 		}
-		dot, accent = lipgloss.NewStyle().Foreground(green).Render("●"), green
+		dot = statusDot(true, 0)
 	}
 	line := func(parts []string, label string) string {
 		return ftLabel.Render(strings.Join(parts, " · ")) + dim.Render(" · ") + dot + " " + ftLabel.Render(label)
 	}
-	return footBox{title: "AI link", accent: accent, lines: []string{line(parts, label)},
+	return footBox{title: "AI link", accent: linkAccent, lines: []string{line(parts, label)},
 		alts: []string{line(short, shortLabel)}}, true
 }
 
@@ -1219,8 +1226,8 @@ func (m model) footerView() string {
 			alts: []string{strings.Join(sync[1], "  "), strings.Join(sync[2], "  ")}})
 	}
 	if m.board != nil {
-		meter, accent := apiMeter(m.board.RateLimit)
-		boxes = append(boxes, footBox{title: "API budget", accent: accent, lines: meter[:1], alts: meter[1:]})
+		meter := apiMeter(m.board.RateLimit)
+		boxes = append(boxes, footBox{title: "API budget", accent: budgetAccent, lines: meter[:1], alts: meter[1:]})
 	}
 	if b, ok := m.linkBody(); ok {
 		boxes = append(boxes, b)

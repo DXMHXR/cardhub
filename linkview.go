@@ -16,9 +16,27 @@ var (
 	lvPurple = lipgloss.Color("#a371f7")
 	lvRed    = lipgloss.Color("#f85149")
 	lvWhite  = lipgloss.Color("#f0f6fc")
+	lvTeal   = lipgloss.Color("#39c5cf")
+	lvOrange = lipgloss.Color("#ffa657")
 )
 
+// One colour per meaning on this screen: purple an agent, teal reports sent
+// to it, yellow queued, blue rules and projects, orange filter values. Status
+// dots use the usual green / yellow / red (see statusDot).
+
 func fg(c lipgloss.Color) lipgloss.Style { return lipgloss.NewStyle().Foreground(c) }
+
+// statusDot is a watcher's agent status: green ● an agent is waiting, yellow ●
+// reports are queued with no agent to take them, dim ○ idle.
+func statusDot(waiting bool, queued int) string {
+	switch {
+	case waiting:
+		return fg(lvGreen).Render("●")
+	case queued > 0:
+		return fg(lvYellow).Render("●")
+	}
+	return ftRule.Render("○")
+}
 
 // linkView is the AI link screen (tab 3): every watcher (one per project AI
 // agents use), the numbers at a glance, the rules, and a timeline of what
@@ -73,9 +91,9 @@ func (m model) linkWatchers(snaps []LinkSnapshot, w int) string {
 		if s.OnScreen {
 			name += "  " + fg(lvBlue).Render("on screen")
 		}
-		status := fg(lvGrey).Render("○ no agent")
+		status := statusDot(false, s.Queued) + " " + ftLabel.Render("no agent")
 		if s.Waiting {
-			status, accent = bold.Foreground(lvGreen).Render("● agent waiting"), lvGreen
+			status, accent = statusDot(true, 0)+" "+bold.Foreground(lvWhite).Render("agent waiting"), lvPurple
 		}
 		detail := dim.Render(fmt.Sprintf("%s · %d sent", plural(len(s.Rules), "rule"), s.Sent))
 		if s.Queued > 0 {
@@ -116,7 +134,7 @@ func linkTiles(snaps []LinkSnapshot, w int) string {
 		tile("Rules", rules, "active", lvBlue),
 		tile("Matching", matching, "cards", lvWhite),
 		tile("Queued", queued, "to send", lvYellow),
-		tile("Sent", sent, "total", lvGreen),
+		tile("Sent", sent, "total", lvTeal),
 	}, w)
 }
 
@@ -165,7 +183,7 @@ func (m model) linkRules(snaps []LinkSnapshot, w int) string {
 		f := highlightFilter(trunc(x.r.Filter, filterW))
 		line += f + strings.Repeat(" ", max(0, filterW-lipgloss.Width(f))) + "  " +
 			bold.Foreground(lvWhite).Render(fmt.Sprintf("%*d", numW, x.r.Matches)) + "  " +
-			fg(lvGreen).Render(fmt.Sprintf("%*d", numW, x.r.Reported))
+			fg(lvTeal).Render(fmt.Sprintf("%*d", numW, x.r.Reported))
 		lines = append(lines, line)
 	}
 	return boxRows([]footBox{{title: title, accent: lvBlue, lines: lines}}, w)
@@ -215,7 +233,7 @@ func (m model) linkActivity(snaps []LinkSnapshot, w, h int) string {
 		icon string
 		c    lipgloss.Color
 	}{
-		"rule": {"✚", lvBlue}, "queued": {"◆", lvYellow}, "sent": {"➜", lvGreen},
+		"rule": {"✚", lvBlue}, "queued": {"◆", lvYellow}, "sent": {"➜", lvTeal},
 		"agent": {"◉", lvPurple}, "stop": {"■", lvRed},
 	}
 	var lines []string
@@ -272,7 +290,7 @@ func (m model) columnColor(name string) string {
 }
 
 // highlightFilter colours a GitHub project filter: "-" exclusions red,
-// qualifier names blue, values green, free text white.
+// qualifier names blue, values orange, free text white.
 func highlightFilter(f string) string {
 	var out []string
 	for _, tok := range splitFilter(f) {
@@ -282,7 +300,7 @@ func highlightFilter(f string) string {
 			tok = tok[1:]
 		}
 		if k, v, ok := strings.Cut(tok, ":"); ok && k != "" && !strings.HasPrefix(k, `"`) {
-			b.WriteString(fg(lvBlue).Render(k) + dim.Render(":") + fg(lipgloss.Color("#7ee787")).Render(v))
+			b.WriteString(fg(lvBlue).Render(k) + dim.Render(":") + fg(lvOrange).Render(v))
 		} else {
 			b.WriteString(fg(lvWhite).Render(tok))
 		}
