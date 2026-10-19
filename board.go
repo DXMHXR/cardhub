@@ -174,7 +174,7 @@ func (m model) columnBox(ci, w int, lay boxLayout) string {
 	for i := off; i < off+vis; i++ {
 		switch {
 		case i < len(c.items):
-			card := strings.TrimSuffix(m.cardView(c.items[i], inner, sel && i == m.row), "\n")
+			card := strings.TrimSuffix(m.cardView(c.items[i], inner, sel && i == m.row, color), "\n")
 			if lay.compact { // the title line only
 				card, _, _ = strings.Cut(card, "\n")
 			}

@@ -1244,12 +1244,14 @@ func (m model) footerView() string {
 	return "\n" + boxRows(boxes, m.width) + "\n" + boxRows([]footBox{shortcuts}, m.width)
 }
 
-func (m model) cardView(it Item, w int, sel bool) string {
-	// the selected card swaps its state-coloured bar for a light-grey one and brightens its text
-	bar := lipgloss.NewStyle().Foreground(stateColor(it.State)).Render("▌")
+// cardView draws a card w wide; its bar takes the column's colour (the state,
+// open or closed, is on the second line).
+func (m model) cardView(it Item, w int, sel bool, color lipgloss.Color) string {
+	// the selected card's bar turns light grey (same shape) and its text brightens
+	bar := lipgloss.NewStyle().Foreground(color).Render("▌")
 	titleSt, metaSt := bold, dim
 	if sel {
-		bar = lipgloss.NewStyle().Foreground(selBar).Bold(true).Render("┃")
+		bar = lipgloss.NewStyle().Foreground(selBar).Render("▌")
 		titleSt = bold.Foreground(lipgloss.Color("#ffffff"))
 		metaSt = lipgloss.NewStyle().Foreground(selText)
 	}
