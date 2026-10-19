@@ -973,17 +973,14 @@ func flow(entries []string, width int, gap string) []string {
 
 // apiMeter shows how much of the hourly API budget is used, like a context-window
 // meter: a bar that fills (green → yellow → red) as the budget is spent.
-func apiMeter(rl RateLimit) (string, lipgloss.Color) {
-	const w = 10
+// It comes in ever shorter versions for narrow screens: a shorter bar, then a
+// circle that fills (○ ◔ ◑ ◕ ●), then without the count left.
+func apiMeter(rl RateLimit) ([]string, lipgloss.Color) {
 	if rl.Limit <= 0 {
-		return ftLabel.Render("–"), lipgloss.Color("#8b949e")
+		return []string{ftLabel.Render("–")}, lipgloss.Color("#8b949e")
 	}
 	used := clamp(rl.Limit-rl.Remaining, 0, rl.Limit)
 	frac := float64(used) / float64(rl.Limit)
-	fill := int(frac*w + 0.5)
-	if used > 0 && fill == 0 {
-		fill = 1
-	}
 	color := lipgloss.Color("#3fb950")
 	switch {
 	case rl.Remaining < lowRateLimit:
@@ -991,19 +988,37 @@ func apiMeter(rl RateLimit) (string, lipgloss.Color) {
 	case frac >= 0.5:
 		color = lipgloss.Color("#d29922")
 	}
-	bar := lipgloss.NewStyle().Foreground(color).Render(strings.Repeat("█", fill)) +
-		ftRule.Render(strings.Repeat("░", w-fill))
-	pct := lipgloss.NewStyle().Foreground(color).Render(fmt.Sprintf("%d%%", int(frac*100+0.5)))
-	// the bar and % already show the share; the count says how much is left
-	detail := ftLabel.Render(fmt.Sprintf("%d left", rl.Remaining))
+	st := lipgloss.NewStyle().Foreground(color)
+	bar := func(w int) string {
+		fill := int(frac*float64(w) + 0.5)
+		if used > 0 && fill == 0 {
+			fill = 1
+		}
+		return st.Render(strings.Repeat("█", fill)) + ftRule.Render(strings.Repeat("░", w-fill))
+	}
+	circle := []string{"○", "◔", "◑", "◕", "●"}[int(frac*4+0.5)]
+	if used > 0 && circle == "○" {
+		circle = "◔"
+	}
+	pct := st.Render(fmt.Sprintf("%d%%", int(frac*100+0.5)))
+	sep := dim.Render(" · ")
+	// the meter and % already show the share; the count says how much is left
+	left, leftShort := ftLabel.Render(fmt.Sprintf("%d left", rl.Remaining)), ftLabel.Render(fmt.Sprint(rl.Remaining))
 	if rl.Remaining < lowRateLimit {
-		detail = errStyle.Render(fmt.Sprintf("%d left (throttled)", rl.Remaining))
+		left = errStyle.Render(fmt.Sprintf("%d left (throttled)", rl.Remaining))
+		leftShort = errStyle.Render(fmt.Sprintf("%d!", rl.Remaining))
 	}
-	reset := ""
-	if left := time.Until(rl.ResetAt); left > 0 {
-		reset = dim.Render(" · ") + ftLabel.Render("resets ") + ftKey.Render(untilLabel(left))
+	reset, resetShort := "", ""
+	if d := time.Until(rl.ResetAt); d > 0 {
+		reset = sep + ftLabel.Render("resets ") + ftKey.Render(untilLabel(d))
+		resetShort = sep + ftLabel.Render("↺") + ftKey.Render(untilLabel(d))
 	}
-	return bar + " " + pct + dim.Render(" · ") + detail + reset, color
+	return []string{
+		bar(10) + " " + pct + sep + left + reset,
+		bar(5) + " " + pct + sep + left + resetShort,
+		st.Render(circle) + " " + pct + sep + leftShort + resetShort,
+		st.Render(circle) + " " + pct + resetShort,
+	}, color
 }
 
 // untilLabel formats a countdown compactly: 45s, 37m, 1h05m.
@@ -1021,43 +1036,53 @@ func untilLabel(d time.Duration) string {
 // linkBody describes the AI watchers for the footer box: "ready · 0 rules ·
 // ○ no agent waiting", later "2 boards · 3 rules · 10 sent · ● 1 agent waiting".
 // The accent turns green while an agent is listening.
-func (m model) linkBody() ([]string, lipgloss.Color, bool) {
+func (m model) linkBody() (footBox, bool) {
 	st := m.hub.Status()
 	if st.Conflict != "" && m.owner != "" {
-		yellow := lipgloss.Color("#d29922")
-		warn := []string{lipgloss.NewStyle().Foreground(yellow).Bold(true).Render("⚠ " + st.Conflict)}
-		lines, _, _ := m.linkSummary(st)
-		return append(warn, lines...), yellow, true
+		yellow := lipgloss.NewStyle().Foreground(lipgloss.Color("#d29922")).Bold(true)
+		b := footBox{title: "AI link", accent: lipgloss.Color("#d29922"),
+			lines: []string{yellow.Render("⚠ " + st.Conflict)},
+			alts:  []string{yellow.Render("⚠ another CardHub has the AI link")}}
+		if more, ok := m.linkSummary(st); ok {
+			b.lines = append(b.lines, more.lines...)
+		}
+		return b, true
 	}
 	return m.linkSummary(st)
 }
 
 // linkSummary is linkBody for the watchers this cardhub does serve.
-func (m model) linkSummary(st hubStatus) ([]string, lipgloss.Color, bool) {
+func (m model) linkSummary(st hubStatus) (footBox, bool) {
 	grey, green := lipgloss.Color("#8b949e"), lipgloss.Color("#3fb950")
 	if st.Boards == 0 {
-		return nil, grey, false
+		return footBox{}, false
 	}
 	var parts []string
 	if st.Boards > 1 {
 		parts = append(parts, plural(st.Boards, "board"))
 	}
 	parts = append(parts, plural(st.Rules, "rule"), fmt.Sprintf("%d sent", st.Sent))
+	short := parts
 	if st.Boards == 1 && st.Rules == 0 && st.Sent == 0 { // nothing set up yet
-		parts = []string{"ready", "0 rules"}
+		parts, short = []string{"ready", "0 rules"}, []string{"0 rules"}
 	}
 	if st.Queued > 0 {
 		parts = append(parts, fmt.Sprintf("%d queued", st.Queued))
+		short = append(short, fmt.Sprintf("%d queued", st.Queued))
 	}
-	agent, accent := ftRule.Render("○")+" "+ftLabel.Render("no agent waiting"), grey
+	dot, label, shortLabel, accent := ftRule.Render("○"), "no agent waiting", "no agent", grey
 	if st.Waiting > 0 {
-		label := "agent waiting"
+		label, shortLabel = "agent waiting", "waiting"
 		if st.Waiting > 1 {
-			label = fmt.Sprintf("%d agents waiting", st.Waiting)
+			label, shortLabel = fmt.Sprintf("%d agents waiting", st.Waiting), fmt.Sprintf("%d waiting", st.Waiting)
 		}
-		agent, accent = lipgloss.NewStyle().Foreground(green).Render("●")+" "+ftLabel.Render(label), green
+		dot, accent = lipgloss.NewStyle().Foreground(green).Render("●"), green
 	}
-	return []string{ftLabel.Render(strings.Join(parts, " · ")) + dim.Render(" · ") + agent}, accent, true
+	line := func(parts []string, label string) string {
+		return ftLabel.Render(strings.Join(parts, " · ")) + dim.Render(" · ") + dot + " " + ftLabel.Render(label)
+	}
+	return footBox{title: "AI link", accent: accent, lines: []string{line(parts, label)},
+		alts: []string{line(short, shortLabel)}}, true
 }
 
 // everyLabel shows the sync interval, marking it "auto" when it was stretched.
@@ -1071,34 +1096,41 @@ func everyLabel(base, eff time.Duration) string {
 func (m model) footerView() string {
 	var boxes []footBox
 
-	// Sync: state, freshness, cadence (and the last error, if any)
-	var sync []string
+	// Sync: state, freshness, cadence (and the last error, if any), in three
+	// lengths: labels, short labels, icons
+	var sync [3][]string
+	add := func(full, short, icon string) {
+		sync[0], sync[1], sync[2] = append(sync[0], full), append(sync[1], short), append(sync[2], icon)
+	}
 	switch {
 	case m.fetching:
-		sync = append(sync, m.spin.View()+" "+ftLabel.Render("Syncing…"))
+		add(m.spin.View()+" "+ftLabel.Render("Syncing…"), m.spin.View()+" "+ftLabel.Render("Syncing…"), m.spin.View())
 	case m.paused:
-		sync = append(sync, lipgloss.NewStyle().Foreground(lipgloss.Color("#d29922")).Bold(true).Render("❚❚ Paused")+
-			dim.Render(" (Space resumes)"))
+		p := lipgloss.NewStyle().Foreground(lipgloss.Color("#d29922")).Bold(true).Render("❚❚ Paused")
+		add(p+dim.Render(" (Space resumes)"), p, lipgloss.NewStyle().Foreground(lipgloss.Color("#d29922")).Bold(true).Render("❚❚"))
 	case !m.nextFetch.IsZero():
-		sync = append(sync, pair("Next", fmt.Sprintf("%ds", max(0, int(time.Until(m.nextFetch).Seconds())))))
+		next := fmt.Sprintf("%ds", max(0, int(time.Until(m.nextFetch).Seconds())))
+		add(pair("Next", next), pair("Next", next), ftKey.Render("◷")+" "+ftLabel.Render(next))
 	}
 	if m.board != nil {
-		sync = append(sync, pair("Updated", ago(m.board.FetchedAt)+" ago"),
-			pair("Every", everyLabel(m.interval, m.effectiveInterval())))
+		upd, every := ago(m.board.FetchedAt), everyLabel(m.interval, m.effectiveInterval())
+		add(pair("Updated", upd+" ago"), pair("Upd", upd), ftKey.Render("✓")+" "+ftLabel.Render(upd))
+		add(pair("Every", every), pair("Every", every), ftKey.Render("↻")+" "+ftLabel.Render(every))
 	}
-	if len(sync) > 0 {
-		lines := []string{strings.Join(sync, "  ")}
+	if len(sync[0]) > 0 {
+		lines := []string{strings.Join(sync[0], "  ")}
 		if m.lastErr != nil && m.board != nil {
 			lines = append(lines, errStyle.Render(m.lastErr.Error()))
 		}
-		boxes = append(boxes, footBox{title: "Sync", accent: lipgloss.Color("#58a6ff"), lines: lines})
+		boxes = append(boxes, footBox{title: "Sync", accent: lipgloss.Color("#58a6ff"), lines: lines,
+			alts: []string{strings.Join(sync[1], "  "), strings.Join(sync[2], "  ")}})
 	}
 	if m.board != nil {
-		body, accent := apiMeter(m.board.RateLimit)
-		boxes = append(boxes, footBox{title: "API budget", accent: accent, lines: []string{body}})
+		meter, accent := apiMeter(m.board.RateLimit)
+		boxes = append(boxes, footBox{title: "API budget", accent: accent, lines: meter[:1], alts: meter[1:]})
 	}
-	if lines, accent, ok := m.linkBody(); ok {
-		boxes = append(boxes, footBox{title: "AI link", accent: accent, lines: lines})
+	if b, ok := m.linkBody(); ok {
+		boxes = append(boxes, b)
 	}
 
 	// Tab cycles the screens; name the one it goes to

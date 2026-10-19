@@ -7,10 +7,13 @@ import (
 )
 
 // footBox is one titled section of the footer: ╭─ Title ───╮ │ lines │ ╰───╯
+// alts are ever shorter one-line versions of its first line (short words,
+// then icons), so boxes can stay side by side on a narrow screen.
 type footBox struct {
 	title  string
 	accent lipgloss.Color // title colour
 	lines  []string
+	alts   []string
 }
 
 func (b footBox) natural() int {
@@ -20,6 +23,18 @@ func (b footBox) natural() int {
 	}
 	return w + 4 // borders + padding
 }
+
+// short is the box with its first line swapped for alt i (0 is the original).
+func (b footBox) short(i int) footBox {
+	if i == 0 || i > len(b.alts) || len(b.lines) == 0 {
+		return b
+	}
+	lines := append([]string{b.alts[i-1]}, b.lines[1:]...)
+	return footBox{title: b.title, accent: b.accent, lines: lines}
+}
+
+// narrowest is the box at its shortest.
+func (b footBox) narrowest() int { return b.short(len(b.alts)).natural() }
 
 // render draws the box w wide and h content lines tall, truncating lines that don't fit.
 func (b footBox) render(w, h int) string {
@@ -40,15 +55,15 @@ func (b footBox) render(w, h int) string {
 }
 
 // boxRows packs boxes into rows that fit width (in order, as many per row as
-// fit at their natural width), then stretches each row to the full width and
-// evens out the heights within it.
+// fit at their shortest), shortens the widest boxes in a row until it fits,
+// then stretches each row to the full width and evens out the heights.
 func boxRows(boxes []footBox, width int) string {
 	const gap = 1
 	var rows [][]footBox
 	var row []footBox
 	used := 0
 	for _, b := range boxes {
-		w := min(b.natural(), width)
+		w := min(b.narrowest(), width)
 		if len(row) > 0 && used+gap+w > width {
 			rows, row, used = append(rows, row), nil, 0
 		}
@@ -63,6 +78,7 @@ func boxRows(boxes []footBox, width int) string {
 
 	var out []string
 	for _, r := range rows {
+		r = shorten(r, width, gap)
 		natural, h := 0, 1
 		for _, b := range r {
 			natural += min(b.natural(), width)
@@ -83,4 +99,24 @@ func boxRows(boxes []footBox, width int) string {
 		out = append(out, lipgloss.JoinHorizontal(lipgloss.Top, parts...))
 	}
 	return strings.Join(out, "\n")
+}
+
+// shorten swaps the widest boxes of a row for shorter versions until the row fits.
+func shorten(r []footBox, width, gap int) []footBox {
+	level := make([]int, len(r))
+	out := append([]footBox(nil), r...)
+	for {
+		total, widest := gap*(len(r)-1), -1
+		for i, b := range out {
+			total += b.natural()
+			if level[i] < len(r[i].alts) && (widest < 0 || b.natural() > out[widest].natural()) {
+				widest = i
+			}
+		}
+		if total <= width || widest < 0 {
+			return out
+		}
+		level[widest]++
+		out[widest] = r[widest].short(level[widest])
+	}
 }
