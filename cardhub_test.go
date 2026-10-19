@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 	"os"
 	"path/filepath"
@@ -103,15 +104,17 @@ func TestMovesLightConnectors(t *testing.T) {
 			t.Errorf("connector %d: got n=%d dir=%d, want %+v", k, n, dir, want)
 		}
 	}
+	lipgloss.SetColorProfile(termenv.TrueColor) // to tell the white streaming dot apart
 	out := m.boardView(50)
-	if !strings.Contains(out, "×2") || !strings.Contains(out, "×1") {
-		t.Errorf("lit connectors missing from render:\n%s", out)
+	lipgloss.SetColorProfile(termenv.Ascii)
+	if white := strings.Count(out, "255;255;255m•"); white != 3 || strings.Contains(out, "×") {
+		t.Errorf("want a white dot on each of the 3 lit connectors, got %d:\n%s", white, ansi.Strip(out))
 	}
-	t.Log("\n" + out)
+	t.Log("\n" + ansi.Strip(out))
 
-	m.moves[0].at = time.Now().Add(-2 * flashFor) // a's move has expired
-	if n, _ := m.traffic(0); n != 0 {
-		t.Error("expired move should no longer light the connector")
+	m.moves[0].at = time.Now().Add(-time.Hour) // connectors stay lit all session
+	if n, _ := m.traffic(0); n == 0 {
+		t.Error("an old move should still light the connector")
 	}
 }
 

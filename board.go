@@ -230,12 +230,15 @@ func (m model) columnBox(ci, w int, lay boxLayout) string {
 	return border.Render(content)
 }
 
-// marching renders a dotted lane of width w whose bright dots move toward dir (+1 right, -1 left).
-func (m model) marching(w, dir int, color string) string {
+// marching renders a dotted lane of width w whose bright dots move toward dir
+// (+1 right, -1 left). With head given, the dot at that index is white.
+func (m model) marching(w, dir int, color string, head ...int) string {
 	lit := lipgloss.NewStyle().Foreground(ghColor(color)).Bold(true)
 	var b strings.Builder
 	for i := 0; i < w; i++ {
-		if ((i-dir*m.frame)%3+3)%3 == 0 {
+		if len(head) > 0 && i == head[0] {
+			b.WriteString(whiteDot.Render("•"))
+		} else if ((i-dir*m.frame)%3+3)%3 == 0 {
 			b.WriteString(lit.Render("•"))
 		} else {
 			b.WriteString(dim.Render("·"))
@@ -244,29 +247,35 @@ func (m model) marching(w, dir int, color string) string {
 	return b.String()
 }
 
-// move is a card changing column, kept for flashFor so the connectors it crossed light up.
+// move is a card changing column. The connectors it crossed stay lit for the
+// rest of the session (until the project or view changes).
 type move struct {
 	from, to string
 	at       time.Time
 }
 
+// pruneMoves keeps only the latest move for each from→to pair: that's all the
+// connectors need, and it keeps a long session's list small.
 func (m *model) pruneMoves() {
+	latest := map[[2]string]int{}
 	kept := m.moves[:0]
 	for _, mv := range m.moves {
-		if time.Since(mv.at) < flashFor {
-			kept = append(kept, mv)
+		key := [2]string{mv.from, mv.to}
+		if i, ok := latest[key]; ok {
+			if mv.at.After(kept[i].at) {
+				kept[i] = mv
+			}
+			continue
 		}
+		latest[key] = len(kept)
+		kept = append(kept, mv)
 	}
 	m.moves = kept
 }
 
-var (
-	fwdColor  = "#e3b341" // card moved forward through the workflow
-	backColor = "#db6d28" // card moved back (e.g. reopened, failed QA)
-)
-
-// traffic reports recent moves across connector k (between columns k and k+1):
-// how many, and the direction of the most recent one (+1 forward, -1 back).
+// traffic reports moves across connector k (between columns k and k+1) this
+// session: how many kinds, and the direction of the most recent one (+1
+// forward, -1 back).
 func (m model) traffic(k int) (n, dir int) {
 	idx := make(map[string]int, len(m.columns))
 	for i, c := range m.columns {
@@ -276,7 +285,7 @@ func (m model) traffic(k int) (n, dir int) {
 	for _, mv := range m.moves {
 		a, okA := idx[mv.from]
 		b, okB := idx[mv.to]
-		if !okA || !okB || time.Since(mv.at) >= flashFor || k < min(a, b) || k >= max(a, b) {
+		if !okA || !okB || k < min(a, b) || k >= max(a, b) {
 			continue
 		}
 		n++
@@ -290,63 +299,50 @@ func (m model) traffic(k int) (n, dir int) {
 	return n, dir
 }
 
-// busyDots renders a lit lane: the idle dotted lane in bold, its dots big
-// and racing twice as fast toward dir.
+// whiteDot is the dot streaming along a lane a card just crossed.
+var whiteDot = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Bold(true)
+
+// busyDots renders a lit lane: the idle dotted lane with one white dot
+// streaming along it toward dir. When it reaches the end the next one starts
+// over; long lanes stream faster so every loop takes about as long.
 func (m model) busyDots(w, dir int, color string) string {
-	hi := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
-	lo := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
-	var b strings.Builder
-	for i := 0; i < w; i++ {
-		if ((i-2*dir*m.frame)%3+3)%3 == 0 {
-			b.WriteString(hi.Render("●"))
-		} else {
-			b.WriteString(lo.Render("•"))
-		}
+	if w <= 0 {
+		return ""
 	}
-	return b.String()
+	pos := m.frame * max(1, w/8) % w
+	if dir < 0 {
+		pos = w - 1 - pos
+	}
+	return m.marching(w, dir, color, pos)
 }
 
 // hFlow is the connector between columns k and k+1 on the same grid row.
-// Idle it's a dotted lane toward the next column; after a card crosses it, it
-// lights up as bold racing dots (in the move's direction) with a count above.
+// Idle it's a dotted lane toward the next column; after a card crosses it, a
+// white dot streams along it in the move's direction.
 func (m model) hFlow(h, k int, toColor string) string {
 	lines := make([]string, h)
 	for i := range lines {
 		lines[i] = strings.Repeat(" ", gapW)
 	}
-	n, dir := m.traffic(k)
-	if n == 0 {
-		head := lipgloss.NewStyle().Foreground(ghColor(toColor)).Render("▸")
-		lines[h/2] = m.marching(gapW-1, 1, toColor) + head
-		return strings.Join(lines, "\n")
+	head := lipgloss.NewStyle().Foreground(ghColor(toColor))
+	switch n, dir := m.traffic(k); {
+	case n == 0:
+		lines[h/2] = m.marching(gapW-1, 1, toColor) + head.Render("▸")
+	case dir > 0:
+		lines[h/2] = m.busyDots(gapW-1, 1, toColor) + head.Render("▸")
+	default:
+		lines[h/2] = head.Render("◂") + m.busyDots(gapW-1, -1, toColor)
 	}
-	color := fwdColor
-	if dir < 0 {
-		color = backColor
-	}
-	st := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
-	if dir > 0 {
-		lines[h/2] = m.busyDots(gapW-1, 1, color) + st.Render("▸")
-	} else {
-		lines[h/2] = st.Render("◂") + m.busyDots(gapW-1, -1, color)
-	}
-	lines[h/2-1] = st.Render(lipgloss.PlaceHorizontal(gapW, lipgloss.Center, fmt.Sprintf("×%d", n)))
 	return strings.Join(lines, "\n")
 }
 
 // wrapFlow is the connector from the last box of a grid row (column k) back to
 // the first box of the next row: ╯ under the last box, a lane running left, ╭
-// down into the next. It lights up like hFlow when cards cross it.
+// down into the next. It streams like hFlow when cards cross it.
 func (m model) wrapFlow(fit, boxW, k int, toColor string) string {
 	x0 := boxW / 2
 	n, dir := m.traffic(k)
-	color := ghColors["GRAY"]
-	if n > 0 {
-		color = fwdColor
-		if dir < 0 {
-			color = backColor
-		}
-	}
+	edge := lipgloss.NewStyle().Foreground(ghColor(toColor))
 	if fit == 1 {
 		arrow := "▼"
 		if dir < 0 {
@@ -355,25 +351,13 @@ func (m model) wrapFlow(fit, boxW, k int, toColor string) string {
 		if m.frame%4 >= 2 {
 			arrow = map[string]string{"▼": "▽", "▲": "△"}[arrow]
 		}
-		st := lipgloss.NewStyle().Foreground(ghColor(toColor))
-		label := ""
-		if n > 0 {
-			st = lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
-			label = st.Render(fmt.Sprintf(" ×%d", n))
-		}
-		return strings.Repeat(" ", x0) + st.Render(arrow) + label
+		return strings.Repeat(" ", x0) + edge.Bold(n > 0).Render(arrow)
 	}
 	x1 := (fit-1)*(boxW+gapW) + boxW/2
 	w := x1 - x0 - 1
-	if n == 0 {
-		edge := lipgloss.NewStyle().Foreground(ghColor(toColor))
-		return strings.Repeat(" ", x0) + edge.Render("╭") + m.marching(w, -1, toColor) + dim.Render("╯")
+	lane := m.marching(w, -1, toColor)
+	if n > 0 { // the lane runs right→left (forward); a backward move travels it left→right
+		lane = m.busyDots(w, -dir, toColor)
 	}
-	// The lane runs right→left (forward). A backward move travels it left→right.
-	st := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
-	label := fmt.Sprintf(" ×%d ", n)
-	lw := len([]rune(label))
-	left := (w - lw) / 2
-	return strings.Repeat(" ", x0) + st.Render("╭") +
-		m.busyDots(left, -dir, color) + st.Render(label) + m.busyDots(w-lw-left, -dir, color) + st.Render("╯")
+	return strings.Repeat(" ", x0) + edge.Render("╭") + lane + dim.Render("╯")
 }
