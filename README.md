@@ -148,12 +148,23 @@ cardhub -once my-org 3                               # print column counts and e
 cardhub doctor                                       # check your setup
 cardhub version                                      # print the version
 cardhub update                                       # install the latest release in place
-cardhub notify … / cardhub events …                  # AI link (see below)
-cardhub guide                                        # the AI link manual agents read
 cardhub skill install                                # teach your AI agent CLIs to use CardHub
 ```
 
 A board can be named by its **project title** (case doesn't matter, and a unique part such as `road` works), by its URL (the board's address in your browser), or by owner and number. If a name matches several projects, CardHub lists them so you can be more specific. `-interval 30s` sets the fastest refresh rate.
+
+AI link commands, which AI agents run against the CardHub you have open (see [AI link](#ai-link-let-ai-agents-react-to-card-changes)):
+
+```sh
+cardhub notify add 'is:open label:bug'               # report cards matching this filter, each one once
+cardhub notify list                                  # rules (with ids), match counts, waiting agent
+cardhub notify remove 2                              # stop rule 2
+cardhub events --wait --json                         # wait until there are reports, print them, exit
+cardhub events                                       # print queued reports now, without waiting
+cardhub guide                                        # the full manual agents read
+```
+
+Add `--board "Roadmap"` when more than one board is open. `cardhub notify -h` lists every flag.
 
 ### Keys
 
