@@ -17,7 +17,7 @@ CardHub fixes both. It's the board I keep open in a terminal tab, and it's also 
 ## Features
 
 - **Live kanban board.** Columns follow your project's Status (or a view's grouping) in a responsive grid that wraps to fit any terminal 30+ columns wide. Each column shows 3 cards and scrolls.
-- **See work move.** Animated dotted connectors show the workflow direction. When a card changes column, the connectors it crossed light up: yellow for forward, orange `◀` for back, with a `×N` count. Recently changed cards get a yellow ●.
+- **See work move.** Animated dotted connectors show the workflow direction. When a card changes column, the connectors it crossed light up as bold racing dots: yellow for forward, orange `◂` for back, with a `×N` count. Recently changed cards get a yellow ●.
 - **Projects and saved views.** Switch project (`P`) or saved view (`V`) from a searchable menu. Open a board by its name, URL or owner/number. CardHub remembers the last board and view you watched.
 - **Search with GitHub filters.** `/` accepts free text or GitHub's filter syntax (`label:bug assignee:@me is:open`), and runs on GitHub, so column totals stay exact.
 - **Stats screen.** A bar and trend line per column, plus breakdowns by state and assignee.

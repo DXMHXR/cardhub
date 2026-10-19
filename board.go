@@ -290,16 +290,17 @@ func (m model) traffic(k int) (n, dir int) {
 	return n, dir
 }
 
-// striped renders a lit lane: bright and faint dashes racing toward dir.
-func (m model) striped(w, dir int, color string) string {
+// busyDots renders a lit lane: the idle dotted lane in bold, its dots big
+// and racing twice as fast toward dir.
+func (m model) busyDots(w, dir int, color string) string {
 	hi := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
-	lo := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Faint(true)
+	lo := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
 	var b strings.Builder
 	for i := 0; i < w; i++ {
-		if ((i-2*dir*m.frame)%4+4)%4 < 2 {
-			b.WriteString(hi.Render("━"))
+		if ((i-2*dir*m.frame)%3+3)%3 == 0 {
+			b.WriteString(hi.Render("●"))
 		} else {
-			b.WriteString(lo.Render("─"))
+			b.WriteString(lo.Render("•"))
 		}
 	}
 	return b.String()
@@ -307,7 +308,7 @@ func (m model) striped(w, dir int, color string) string {
 
 // hFlow is the connector between columns k and k+1 on the same grid row.
 // Idle it's a dotted lane toward the next column; after a card crosses it, it
-// lights up as racing stripes (in the move's direction) with a count above.
+// lights up as bold racing dots (in the move's direction) with a count above.
 func (m model) hFlow(h, k int, toColor string) string {
 	lines := make([]string, h)
 	for i := range lines {
@@ -325,9 +326,9 @@ func (m model) hFlow(h, k int, toColor string) string {
 	}
 	st := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
 	if dir > 0 {
-		lines[h/2] = m.striped(gapW-1, 1, color) + st.Render("▶")
+		lines[h/2] = m.busyDots(gapW-1, 1, color) + st.Render("▸")
 	} else {
-		lines[h/2] = st.Render("◀") + m.striped(gapW-1, -1, color)
+		lines[h/2] = st.Render("◂") + m.busyDots(gapW-1, -1, color)
 	}
 	lines[h/2-1] = st.Render(lipgloss.PlaceHorizontal(gapW, lipgloss.Center, fmt.Sprintf("×%d", n)))
 	return strings.Join(lines, "\n")
@@ -374,5 +375,5 @@ func (m model) wrapFlow(fit, boxW, k int, toColor string) string {
 	lw := len([]rune(label))
 	left := (w - lw) / 2
 	return strings.Repeat(" ", x0) + st.Render("╭") +
-		m.striped(left, -dir, color) + st.Render(label) + m.striped(w-lw-left, -dir, color) + st.Render("╯")
+		m.busyDots(left, -dir, color) + st.Render(label) + m.busyDots(w-lw-left, -dir, color) + st.Render("╯")
 }
