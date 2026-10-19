@@ -22,6 +22,8 @@ Usage:
   cardhub version                print the version
   cardhub notify | events        AI link: let an AI agent hear about card changes
                                  (cardhub notify -h for details)
+  cardhub guide                  how AI agents use the AI link (the manual they read)
+  cardhub skill install          teach your AI agent CLIs to use CardHub
 
 Examples:
   cardhub -view Bug my-org 3     open a saved view by name or number
@@ -50,6 +52,10 @@ func main() {
 			os.Exit(runNotify(os.Args[2:]))
 		case "events":
 			os.Exit(runEvents(os.Args[2:]))
+		case "guide":
+			os.Exit(runGuide())
+		case "skill":
+			os.Exit(runSkill(os.Args[2:]))
 		}
 	}
 	flag.Parse()

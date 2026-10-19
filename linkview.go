@@ -320,7 +320,7 @@ func splitFilter(f string) []string {
 // board (the commands use the only watched one) and filters on GitHub's
 // default "bug" label, so it works on any project as is.
 func samplePrompt() string {
-	return "Run `cardhub notify add 'is:open label:bug'`, then run `cardhub events --wait --json` in the background. " +
+	return "Read `cardhub guide`. Run `cardhub notify add 'is:open label:bug' --no-open`, then run `cardhub events --wait --json` in the background. " +
 		"When it returns, handle each reported card, oldest first, then run `events --wait` again. " +
 		"If it exits with code 3 or 4, CardHub was closed: stop and say so."
 }

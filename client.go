@@ -42,6 +42,8 @@ Flags (any of the above):
   --no-open                       notify add: fail instead of opening cardhub
 
 Exit codes: 0 ok · 1 error · 2 usage · 3 watcher stopped (cardhub quit) · 4 cardhub isn't open
+
+Agents: cardhub guide is the full manual; cardhub skill install teaches your agent CLIs.
 `
 
 type agentFlags struct {

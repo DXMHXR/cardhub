@@ -21,7 +21,7 @@ CardHub fixes both. It's the board I keep open in a terminal tab, and it's also 
 - **Projects and saved views.** Switch project (`P`) or saved view (`V`) from a searchable menu. Open a board by its name, URL or owner/number. CardHub remembers the last board and view you watched.
 - **Search with GitHub filters.** `/` accepts free text or GitHub's filter syntax (`label:bug assignee:@me is:open`), and runs on GitHub, so column totals stay exact.
 - **Stats screen.** A bar and trend line per column, plus breakdowns by state and assignee.
-- **AI link.** AI agents (Claude Code or any agent that can run commands) ask CardHub to report specific card changes, then wait without polling. One CardHub can serve several agents on several projects at once.
+- **AI link.** AI agents (Claude Code or any agent that can run commands) ask CardHub to report specific card changes, then wait without polling. One CardHub can serve several agents on several projects at once. `cardhub skill install` teaches Claude Code, Codex, opencode, Cursor and other agent CLIs how to use it.
 - **Gentle on the GitHub API.** It loads only the cards on screen (about 1 point per refresh, whatever the board's size), adjusts its refresh rate to your hourly budget, and shows that budget as a live bar. `Space` pauses refreshing.
 - **Empty columns, your way.** "No Task" on a quiet grid by default, or little Game Boy-style pets that doze, laze or wait for food, and jump awake when the cursor lands on their column.
 - **Easy setup.** `cardhub doctor` checks your token and access and tells you exactly how to fix anything missing. Errors explain the fix too.
@@ -66,7 +66,9 @@ Install CardHub (https://github.com/DXMHXR/cardhub), a terminal dashboard for Gi
    `gh auth status` and, if the read:project or repo scope is missing, ask me before running
    `gh auth refresh --scopes read:project,repo`. Never print or store my token.
 4. Run `cardhub version` and `cardhub doctor`, fix anything doctor marks with ✘ (asking me before changing my
-   GitHub login), and finish by telling me the installed version and how to start it: `cardhub`.
+   GitHub login).
+5. Run `cardhub skill install` so AI agents on this machine know how to use CardHub, and finish by telling me
+   the installed version and how to start it: `cardhub`.
 ```
 
 ## Quick start
@@ -141,6 +143,8 @@ cardhub -once my-org 3                               # print column counts and e
 cardhub doctor                                       # check your setup
 cardhub version                                      # print the version
 cardhub notify … / cardhub events …                  # AI link (see below)
+cardhub guide                                        # the AI link manual agents read
+cardhub skill install                                # teach your AI agent CLIs to use CardHub
 ```
 
 A board can be named by its **project title** (case doesn't matter, and a unique part such as `road` works), by its URL (the board's address in your browser), or by owner and number. If a name matches several projects, CardHub lists them so you can be more specific. `-interval 30s` sets the fastest refresh rate.
@@ -222,9 +226,11 @@ Exit codes: `0` ok · `1` error · `2` usage · `3` watcher stopped (CardHub qui
 
 Rules are checked on their own timer against the whole project, whatever is on screen: about 1 API point per watched project per check, covering each rule's first 50 matches. CardHub only reads: agents change cards with their own tools (for example `gh project item-edit`).
 
+**Teach your agents once:** `cardhub skill install` adds a small `cardhub` skill to every agent CLI it finds: Claude Code (`~/.claude/skills`), Codex (`~/.codex/skills`), opencode, Cursor and the shared `~/.agents/skills`. The skill only tells the agent when CardHub helps and to run **`cardhub guide`**, which prints the manual for the installed version, so it never goes stale when you upgrade. For an agent without skills, add ``Before using CardHub, run `cardhub guide`.`` to its instructions file (AGENTS.md, GEMINI.md, …). `cardhub skill uninstall` removes it.
+
 **Example agent instructions:**
 
-> Run `cardhub notify add 'is:open label:bug'`, then run `cardhub events --wait --json` in the background. When it returns, handle each reported card, oldest first, then run `events --wait` again. If it exits with code 3 or 4, CardHub was closed: stop and say so.
+> Read `cardhub guide`. Run `cardhub notify add 'is:open label:bug' --no-open`, then run `cardhub events --wait --json` in the background. When it returns, handle each reported card, oldest first, then run `events --wait` again. If it exits with code 3 or 4, CardHub was closed: stop and say so.
 
 ## How it stays cheap on the GitHub API
 

@@ -252,3 +252,25 @@ func TestPetsGallery(t *testing.T) {
 		}
 	}
 }
+
+func TestSkillInstallsOnlyForAgentsPresent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
+	os.MkdirAll(filepath.Join(home, ".codex", "skills"), 0o755)
+	if code := installSkill(); code != exitOK {
+		t.Fatalf("install exit %d", code)
+	}
+	for _, p := range []string{".claude/skills/cardhub/SKILL.md", ".codex/skills/cardhub/SKILL.md"} {
+		if b, err := os.ReadFile(filepath.Join(home, p)); err != nil || !strings.Contains(string(b), "cardhub guide") {
+			t.Errorf("%s: %v", p, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".cursor")); err == nil {
+		t.Error("shouldn't create a home for an agent CLI that isn't installed")
+	}
+	uninstallSkill()
+	if _, err := os.Stat(filepath.Join(home, ".claude/skills/cardhub")); err == nil {
+		t.Error("uninstall should remove the skill")
+	}
+}
