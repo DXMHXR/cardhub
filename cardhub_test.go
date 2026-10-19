@@ -314,3 +314,22 @@ func TestDistinctColors(t *testing.T) {
 		t.Errorf("only the last column (done) should be green: %+v", cols)
 	}
 }
+
+func TestColumnShown(t *testing.T) {
+	sprint := `-status:"Ready for Test","In Test","Waiting Deploy" -label:qa-feedback`
+	for _, c := range []struct {
+		filter, col string
+		want        bool
+	}{
+		{sprint, "Backlog", true}, {sprint, "In Progress", true}, {sprint, "Done", true},
+		{sprint, "Ready for Test", false}, {sprint, "In Test", false}, {sprint, "Waiting Deploy", false},
+		{`status:Todo,"In Progress"`, "In Progress", true}, {`status:Todo,"In Progress"`, "Done", false},
+		{"no:status", "No Status", true}, {"no:status", "Todo", false},
+		{"has:status", "No Status", false}, {"has:status", "Todo", true},
+		{"label:bug", "Todo", true}, {"", "No Status", true},
+	} {
+		if got := columnShown(c.filter, "Status", c.col); got != c.want {
+			t.Errorf("columnShown(%q, %q) = %v, want %v", c.filter, c.col, got, c.want)
+		}
+	}
+}

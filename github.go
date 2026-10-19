@@ -32,6 +32,7 @@ type Board struct {
 	Windowed bool
 	Totals   map[string]int
 	Order    []string
+	Filter   string // the filter the snapshot was fetched with (it can hide columns)
 }
 
 type SelectField struct {
@@ -282,7 +283,7 @@ func notFound(owner string, number int) error {
 // FetchColumns instead and only the stats screen, which needs every card, uses this.
 // filter uses GitHub's project filter syntax and is applied server-side.
 func (c *Client) FetchBoard(ctx context.Context, owner string, number int, meta *ProjectMeta, filter string) (*Board, error) {
-	b := &Board{FetchedAt: time.Now(), Title: meta.Title, URL: meta.URL, Fields: meta.Fields}
+	b := &Board{FetchedAt: time.Now(), Title: meta.Title, URL: meta.URL, Fields: meta.Fields, Filter: filter}
 	var cursor *string
 	for {
 		var r struct {
@@ -328,6 +329,43 @@ func FieldKey(field string) string {
 	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(field), " ", "-"))
 }
 
+// columnShown reports whether the column name of groupField survives filter's
+// qualifiers on that field, the way GitHub hides a board's columns: with
+// status:"A","B" only those columns show, -status:"C" hides C, no:status
+// keeps only "No Status" and has:status hides it.
+func columnShown(filter, groupField, name string) bool {
+	key, none := FieldKey(groupField), "No "+groupField
+	for _, tok := range splitFilter(filter) {
+		neg := strings.HasPrefix(tok, "-")
+		k, v, ok := strings.Cut(strings.TrimPrefix(tok, "-"), ":")
+		if !ok {
+			continue
+		}
+		k = strings.ToLower(k)
+		switch {
+		case (k == "no" || k == "has") && strings.EqualFold(strings.Trim(v, `"`), key):
+			isNone := name == none
+			if (k == "no") == neg { // has:status or -no:status
+				isNone = !isNone
+			}
+			if !isNone {
+				return false
+			}
+		case k == key:
+			in := false
+			for _, val := range strings.Split(v, ",") {
+				if strings.EqualFold(strings.Trim(val, `"`), name) {
+					in = true
+				}
+			}
+			if in == neg {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // FetchColumns is the cheap board sync: one request with one aliased items
 // query per column of groupField, each asking only for the first limits[col]
 // cards (the ones on screen, plus a little read-ahead) and the column's exact
@@ -335,15 +373,20 @@ func FieldKey(field string) string {
 func (c *Client) FetchColumns(ctx context.Context, owner string, number int, meta *ProjectMeta,
 	groupField, filter string, limits map[string]int) (*Board, error) {
 	b := &Board{FetchedAt: time.Now(), Title: meta.Title, URL: meta.URL, Fields: meta.Fields,
-		Totals: map[string]int{}, Windowed: true}
+		Totals: map[string]int{}, Windowed: true, Filter: filter}
 
 	key := FieldKey(groupField)
 	type col struct{ name, query string }
-	cols := []col{{"No " + groupField, "no:" + key}}
+	var cols []col
+	if columnShown(filter, groupField, "No "+groupField) {
+		cols = append(cols, col{"No " + groupField, "no:" + key})
+	}
 	for _, f := range meta.Fields {
 		if f.Name == groupField {
 			for _, o := range f.Options {
-				cols = append(cols, col{o.Name, fmt.Sprintf(`%s:"%s"`, key, strings.ReplaceAll(o.Name, `"`, `\"`))})
+				if columnShown(filter, groupField, o.Name) { // a view can hide columns; don't fetch them
+					cols = append(cols, col{o.Name, fmt.Sprintf(`%s:"%s"`, key, strings.ReplaceAll(o.Name, `"`, `\"`))})
+				}
 			}
 		}
 	}

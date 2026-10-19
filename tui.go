@@ -589,6 +589,9 @@ func (m *model) rebuild() {
 		if name == "No "+m.groupField && m.board.Totals[name] == 0 {
 			continue
 		}
+		if !columnShown(m.board.Filter, m.groupField, name) { // hidden by the view's filter
+			continue
+		}
 		idx[name] = len(cols)
 		color := colors[name]
 		if color == "" {

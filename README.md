@@ -18,7 +18,7 @@ CardHub fixes both. It's the board I keep open in a terminal tab, and it's also 
 
 - **Live kanban board.** Columns follow your project's Status (or a view's grouping) in a responsive grid that wraps to fit any terminal 30+ columns wide. Each column shows 3 cards and scrolls.
 - **See work move.** Animated dotted connectors show the workflow direction. When a card changes column, a white dot streams along each connector it crossed, in the direction it moved (`◂` when it went back), until you quit or switch project or view. Recently changed cards get a yellow ●.
-- **Projects and saved views.** Switch project (`P`) or saved view (`V`) from a searchable menu. Open a board by its name, URL or owner/number. CardHub remembers the last board and view you watched.
+- **Projects and saved views.** Switch project (`P`) or saved view (`V`) from a searchable menu. A view shows the same columns as on GitHub: columns its filter leaves out (like `-status:"In Test"`) are hidden. Open a board by its name, URL or owner/number. CardHub remembers the last board and view you watched.
 - **Search with GitHub filters.** `/` accepts free text or GitHub's filter syntax (`label:bug assignee:@me is:open`), and runs on GitHub, so column totals stay exact.
 - **Stats screen.** A bar and trend line per column, plus breakdowns by state and assignee.
 - **AI link.** AI agents (Claude Code or any agent that can run commands) ask CardHub to report specific card changes, then wait without polling. One CardHub can serve several agents on several projects at once. `cardhub skill install` teaches Claude Code, Codex, opencode, Cursor and other agent CLIs how to use it.
