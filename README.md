@@ -81,6 +81,7 @@ CardHub checks GitHub for a new release when it starts and every few hours. When
 gh auth login --scopes read:project,repo   # 1. sign in to GitHub (once)
 cardhub doctor                             # 2. check everything is ready
 cardhub                                    # 3. pick a project and go
+cardhub skill install                      # 4. optional: teach your AI agents to use it
 ```
 
 After the first run, `cardhub` reopens the board and view you last watched.
@@ -234,7 +235,13 @@ Rules are checked on their own timer against the whole project, whatever is on s
 
 **Teach your agents once:** `cardhub skill install` adds a small `cardhub` skill to every agent CLI it finds: Claude Code (`~/.claude/skills`), Codex (`~/.codex/skills`), opencode, Cursor and the shared `~/.agents/skills`. The skill only tells the agent when CardHub helps and to run **`cardhub guide`**, which prints the manual for the installed version, so it never goes stale when you upgrade. For an agent without skills, add ``Before using CardHub, run `cardhub guide`.`` to its instructions file (AGENTS.md, GEMINI.md, …). `cardhub skill uninstall` removes it.
 
-**Example agent instructions:**
+**With the skill installed,** open CardHub on your board and just tell your agent what to watch, in your own words:
+
+> Use cardhub to watch Qasir App Project for cards labelled needs-triage, and triage each one as it comes in.
+
+The agent reads `cardhub guide`, adds the rule with `--no-open` (so it uses the CardHub you have open instead of starting another), waits in the background, and handles each card as CardHub reports it. Name the project when more than one board is open.
+
+**Without the skill,** spell it out:
 
 > Read `cardhub guide`. Run `cardhub notify add 'is:open label:bug' --no-open`, then run `cardhub events --wait --json` in the background. When it returns, handle each reported card, oldest first, then run `events --wait` again. If it exits with code 3 or 4, CardHub was closed: stop and say so.
 
