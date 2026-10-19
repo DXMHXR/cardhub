@@ -24,14 +24,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// Updates: CardHub checks GitHub for a newer release (at most every few
-// hours, cached between runs), shows it in the header, and can replace its own
+// Updates: CardHub checks GitHub for a newer release (at most once an hour,
+// cached between runs), shows it in the header, and can replace its own
 // binary with the release archive for this OS and CPU after checking it
 // against the release's checksums.txt (U on screen, or `cardhub update`).
 
 const (
 	repoSlug      = "DXMHXR/cardhub"
-	checkEvery    = 6 * time.Hour
+	checkEvery    = time.Hour
 	updateTimeout = 2 * time.Minute
 )
 

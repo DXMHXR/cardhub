@@ -73,7 +73,7 @@ Install CardHub (https://github.com/DXMHXR/cardhub), a terminal dashboard for Gi
 
 ### Updating
 
-CardHub checks GitHub for a new release when it starts and every few hours. When there is one, the header shows `↑ vX.Y.Z` next to the version: press `U` to install it, or run `cardhub update`. Either way CardHub downloads the release for your system, checks it against the release's `checksums.txt` and replaces itself; restart CardHub to use the new version. A CardHub built from source only shows that a release is out: update it with `git pull` and `make build`.
+CardHub checks GitHub for a new release when it starts and every hour. When there is one, the header shows `↑ vX.Y.Z` next to the version: press `U` to install it, or run `cardhub update`. Either way CardHub downloads the release for your system, checks it against the release's `checksums.txt` and replaces itself; restart CardHub to use the new version. A CardHub built from source only shows that a release is out: update it with `git pull` and `make build`.
 
 ## Quick start
 
