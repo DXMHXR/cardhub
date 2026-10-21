@@ -952,7 +952,7 @@ func stateColor(s string) lipgloss.Color {
 
 var (
 	dim      = lipgloss.NewStyle().Foreground(lipgloss.Color("#6e7681"))
-	bold     = lipgloss.NewStyle().Bold(true)
+	bold     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#e6edf3")) // explicit: some terminals tint bold default-fg text (e.g. green)
 	titleBar = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#f0f6fc")).Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("#388bfd")).Padding(0, 1)
 	tabOn    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#f0f6fc")).Underline(true)
 	tabOff   = lipgloss.NewStyle().Foreground(lipgloss.Color("#8b949e"))
