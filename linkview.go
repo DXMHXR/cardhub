@@ -76,9 +76,11 @@ func (m model) linkWatchers(snaps []LinkSnapshot, w int) string {
 	st := m.hub.Status()
 	var lines []string
 	accent := lvGrey
-	if st.Conflict != "" {
-		accent = lvYellow
-		lines = append(lines, fg(lvYellow).Render("! ")+ftLabel.Render(st.Conflict))
+	for _, s := range snaps { // on screen, but another cardhub has its AI link
+		if s.OnScreen && s.Conflict != "" {
+			accent = lvYellow
+			lines = append(lines, fg(lvYellow).Render("! ")+ftLabel.Render(s.Conflict))
+		}
 	}
 	for _, s := range snaps {
 		if !s.Active {

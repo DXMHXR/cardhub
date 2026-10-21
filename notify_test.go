@@ -196,3 +196,46 @@ func TestSecondCardhubWarnsThenTakesOver(t *testing.T) {
 		t.Errorf("second cardhub should take over the AI link, got %+v", st)
 	}
 }
+
+func TestSplitKeepsBothBoardsOnScreen(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "ch")
+	if err != nil {
+		t.Skip("no /tmp:", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Setenv("CARDHUB_SOCKET_DIR", dir)
+
+	other, h := NewHub(nil), NewHub(nil)
+	t.Cleanup(func() { other.StopAll("test over"); h.StopAll("test over") })
+	other.Show("acme", 2) // another cardhub has B
+
+	// a split: A focused, B on the other board
+	h.Show("acme", 1, ProjectRef{Owner: "acme", Number: 2})
+	h.Prune(0)
+	snaps := h.Snapshots()
+	if len(snaps) != 2 || !snaps[0].OnScreen || !snaps[1].OnScreen || snaps[0].Board != "acme/1" {
+		t.Fatalf("both boards should be on screen, A first: %+v", snaps)
+	}
+	if snaps[1].Conflict == "" || h.Status().Conflict != "" {
+		t.Errorf("B's conflict belongs to B, not the focused A: %q / %q", snaps[1].Conflict, h.Status().Conflict)
+	}
+	m := newModel(nil, "acme", 1, time.Minute, "", "")
+	m.width, m.hub = 120, h
+	if out := m.linkWatchers(snaps, 120); !strings.Contains(out, "already connected to acme/2") {
+		t.Errorf("the AI link screen should show B's conflict:\n%s", out)
+	}
+
+	// the other cardhub closes: the split's board takes B's AI link over
+	other.StopAll("closed")
+	h.Retake()
+	if st := h.Get("acme", 2).Status(); !st.Active {
+		t.Errorf("B should be served now: %+v", st)
+	}
+
+	// the split closes: B is off screen and, idle, pruned
+	h.Show("acme", 1)
+	h.Prune(0)
+	if h.Get("acme", 2) != nil {
+		t.Error("an idle off-screen watcher should be pruned")
+	}
+}

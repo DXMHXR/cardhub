@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -16,7 +17,8 @@ import (
 type Hub struct {
 	mu      sync.Mutex
 	ws      map[string]*Notifier // by "owner/number"
-	screen  string               // the project on screen
+	screen  string               // the focused project on screen
+	shown   []string             // every project on screen (both boards of a split), focused first
 	changed func(added bool)
 }
 
@@ -45,15 +47,25 @@ func (h *Hub) ensure(owner string, number int) *Notifier {
 	return n
 }
 
-// Show makes owner/number the project on screen. Its watcher starts if it
-// isn't running; every other watcher keeps running.
-func (h *Hub) Show(owner string, number int) {
+// Show makes owner/number the focused project on screen, and others (the
+// split's other board) on screen too. Their watchers start if they aren't
+// running; every other watcher keeps running.
+func (h *Hub) Show(owner string, number int, others ...ProjectRef) {
 	h.mu.Lock()
 	h.screen = boardKey(owner, number)
-	n := h.ensure(owner, number)
+	h.shown = []string{h.screen}
+	ns := []*Notifier{h.ensure(owner, number)}
+	for _, p := range others {
+		if k := boardKey(p.Owner, p.Number); !slices.Contains(h.shown, k) {
+			h.shown = append(h.shown, k)
+			ns = append(ns, h.ensure(p.Owner, p.Number))
+		}
+	}
 	h.mu.Unlock()
-	if st := n.Status(); !st.Active && st.Conflict == "" {
-		n.Serve(owner, number) // a watcher that was closed earlier
+	for _, n := range ns {
+		if st := n.Status(); !st.Active && st.Conflict == "" {
+			n.Serve(n.owner, n.number) // a watcher that was closed earlier
+		}
 	}
 	h.Prune(idleAfter)
 }
@@ -75,17 +87,23 @@ func (h *Hub) Watch(owner string, number int) error {
 	return nil
 }
 
-// Retake tries again to serve the on-screen project when another cardhub had
-// it, so this one picks up the AI link as soon as that one closes.
+// Retake tries again to serve the on-screen projects another cardhub had, so
+// this one picks up their AI link as soon as that one closes.
 func (h *Hub) Retake() {
-	n := h.Screen()
-	if n == nil {
-		return
+	h.mu.Lock()
+	var ns []*Notifier
+	for _, k := range h.shown {
+		if n := h.ws[k]; n != nil {
+			ns = append(ns, n)
+		}
 	}
-	if st := n.Status(); st.Conflict != "" {
-		n.Serve(n.owner, n.number)
-		if st := n.Status(); st.Active && n.changed != nil {
-			go n.changed(false)
+	h.mu.Unlock()
+	for _, n := range ns {
+		if st := n.Status(); st.Conflict != "" {
+			n.Serve(n.owner, n.number)
+			if st := n.Status(); st.Active && n.changed != nil {
+				go n.changed(false)
+			}
 		}
 	}
 }
@@ -100,7 +118,7 @@ func (h *Hub) Get(owner string, number int) *Notifier {
 	return h.ws[boardKey(owner, number)]
 }
 
-// Screen returns the on-screen project's watcher, or nil.
+// Screen returns the focused project's watcher, or nil.
 func (h *Hub) Screen() *Notifier {
 	if h == nil {
 		return nil
@@ -110,7 +128,7 @@ func (h *Hub) Screen() *Notifier {
 	return h.ws[h.screen]
 }
 
-// All lists the watchers, the on-screen one first, then by project.
+// All lists the watchers, the on-screen ones first (focused first), then by project.
 func (h *Hub) All() []*Notifier {
 	if h == nil {
 		return nil
@@ -121,9 +139,15 @@ func (h *Hub) All() []*Notifier {
 	for k := range h.ws {
 		keys = append(keys, k)
 	}
+	rank := func(k string) int { // on screen: its place; off screen: after them
+		if i := slices.Index(h.shown, k); i >= 0 {
+			return i
+		}
+		return len(h.shown)
+	}
 	sort.Slice(keys, func(i, j int) bool {
-		if (keys[i] == h.screen) != (keys[j] == h.screen) {
-			return keys[i] == h.screen
+		if a, b := rank(keys[i]), rank(keys[j]); a != b {
+			return a < b
 		}
 		return keys[i] < keys[j]
 	})
@@ -137,10 +161,11 @@ func (h *Hub) All() []*Notifier {
 func (h *Hub) isScreen(n *Notifier) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return boardKey(n.owner, n.number) == h.screen
+	return slices.Contains(h.shown, boardKey(n.owner, n.number))
 }
 
 // Prune closes off-screen watchers nobody has used for d (no rules, no agent).
+// Both boards of a split are on screen.
 func (h *Hub) Prune(d time.Duration) {
 	if h == nil {
 		return
@@ -148,7 +173,7 @@ func (h *Hub) Prune(d time.Duration) {
 	h.mu.Lock()
 	var gone []*Notifier
 	for k, n := range h.ws {
-		if k != h.screen && n.idle(d) {
+		if !slices.Contains(h.shown, k) && n.idle(d) {
 			gone = append(gone, n)
 			delete(h.ws, k)
 		}
@@ -188,7 +213,7 @@ func (h *Hub) StopAll(reason string) {
 // hubStatus totals the watchers for the footer and dialogs.
 type hubStatus struct {
 	Boards, Rules, Queued, Sent, Waiting int
-	Conflict                             string // the on-screen project is watched by another cardhub
+	Conflict                             string // the focused project is watched by another cardhub
 }
 
 func (h *Hub) Status() hubStatus {

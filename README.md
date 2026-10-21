@@ -200,7 +200,7 @@ The project and view menus open as dialogs over the dimmed board. Type to search
 
 #### Split screen
 
-`\` shows two boards at once, from two projects or from one project in two views. Pick the second board's project from the menu; picking the project already on screen opens its view menu next. The boards sit side by side when each still fits two columns abreast (a terminal about 133 characters wide), and one above the other when it doesn't. Each board has a title line with its item count; the focused one has a blue dot and the cursor, and every key (`P`, `V`, `/`, moving, opening cards) works on it. The project and view menus open over the focused board and name it in their title. `W` moves the focus, and so do the arrow keys past a board's edge toward the other board (← from the right board's left edge, ↑ from the top of the lower one, and so on). `B` swaps the boards' places (left and right, or top and bottom); the focus stays on the same board. `\` closes the split, keeping the focused board. Both boards refresh on their own, each with its own API cost (about 1 point per refresh each); the AI link screen shows the focused one, and the Stats screen counts moves on both.
+`\` shows two boards at once, from two projects or from one project in two views. Pick the second board's project from the menu; picking the project already on screen opens its view menu next. The boards sit side by side when each still fits two columns abreast (a terminal about 133 characters wide), and one above the other when it doesn't. Each board has a title line with its item count; the focused one has a blue dot and the cursor, and every key (`P`, `V`, `/`, moving, opening cards) works on it. The project and view menus open over the focused board and name it in their title. `W` moves the focus, and so do the arrow keys past a board's edge toward the other board (← from the right board's left edge, ↑ from the top of the lower one, and so on). `B` swaps the boards' places (left and right, or top and bottom); the focus stays on the same board. `\` closes the split, keeping the focused board. Both boards refresh on their own, each with its own API cost (about 1 point per refresh each); both boards' projects count as on screen for the AI link (marked `on screen`, never closed for being idle), and the Stats screen counts moves on both.
 
 ### Stats
 
@@ -228,7 +228,7 @@ A cat asleep in its basket, a puppy dreaming of a bone, an owl dozing under the 
 
 A running CardHub can tell AI agents when cards change. An agent doesn't run its own polling loop: it asks CardHub to report specific changes and waits, using no model tokens until something happens.
 
-**Watchers are for AI, the screen is for you.** CardHub runs one *watcher* per project that agents use: the project on screen, plus any project an agent asks for. Watchers keep running when you switch projects or pause the board, so you can browse without interrupting an agent. One CardHub can serve several agents at once, for example AI 1 on project A and AI 2 on project B.
+**Watchers are for AI, the screen is for you.** CardHub runs one *watcher* per project that agents use: the project on screen (both, in a split), plus any project an agent asks for. Watchers keep running when you switch projects or pause the board, so you can browse without interrupting an agent. One CardHub can serve several agents at once, for example AI 1 on project A and AI 2 on project B.
 
 ```sh
 cardhub notify add 'is:open label:bug' --board "Roadmap"   # report cards matching this filter

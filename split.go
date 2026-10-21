@@ -127,6 +127,7 @@ func (m model) paneTitle(w int) string {
 func (m *model) toggleSplit() tea.Cmd {
 	if m.split {
 		m.split, m.other = false, pane{}
+		m.showOnHub()
 		m.clampCursor()
 		return m.loadMore()
 	}
@@ -146,9 +147,7 @@ func (m *model) openSplit(p ProjectRef) tea.Cmd {
 	}
 	m.other, m.pane, m.split = m.pane, np, true
 	m.view = viewBoard
-	if m.hub != nil {
-		m.hub.Show(p.Owner, p.Number)
-	}
+	m.showOnHub()
 	m.onOther(func() tea.Cmd { m.clampCursor(); return nil }) // the board that moved over got smaller
 	cmd := m.fetchCmd()
 	if same && m.views != nil {
@@ -215,6 +214,19 @@ func (m *model) swapBoards() {
 	}
 }
 
+// showOnHub tells the AI link which projects are on screen: the focused
+// board's, and the split's other board's.
+func (m *model) showOnHub() {
+	if m.hub == nil {
+		return
+	}
+	var others []ProjectRef
+	if m.split {
+		others = append(others, ProjectRef{Owner: m.other.owner, Number: m.other.number})
+	}
+	m.hub.Show(m.owner, m.number, others...)
+}
+
 // switchBoard moves the focus to the split's other board.
 func (m *model) switchBoard() tea.Cmd {
 	if !m.split {
@@ -222,9 +234,7 @@ func (m *model) switchBoard() tea.Cmd {
 	}
 	m.pane, m.other = m.other, m.pane
 	m.focusFrame = m.frame // its pet is startled awake
-	if m.hub != nil {
-		m.hub.Show(m.owner, m.number)
-	}
+	m.showOnHub()
 	m.rememberBoard()
 	m.clampCursor()
 	return m.loadMore()

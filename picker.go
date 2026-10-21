@@ -202,9 +202,7 @@ func (m *model) switchProject(p ProjectRef) tea.Cmd {
 		return nil
 	}
 	m.owner, m.number = p.Owner, p.Number
-	if m.hub != nil { // a watcher for the new project; the others keep running
-		m.hub.Show(p.Owner, p.Number)
-	}
+	m.showOnHub() // a watcher for the new project; the others keep running
 	m.board, m.meta, m.views, m.viewIdx, m.viewArg = nil, nil, nil, -1, ""
 	m.groupField, m.columns, m.moves = "", nil, nil
 	m.changedAt = map[string]time.Time{}
