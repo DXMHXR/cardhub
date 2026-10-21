@@ -122,7 +122,7 @@ export GITHUB_TOKEN=<your token>     # add to ~/.zshrc to keep it
 ### Check your setup
 
 ```
-CardHub doctor v0.3.5 — checking what CardHub needs to run
+CardHub doctor v0.4.0 — checking what CardHub needs to run
 
  ✔ GitHub CLI installed
  ✔ GitHub token found          from gh auth token
