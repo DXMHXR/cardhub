@@ -5,7 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -128,12 +130,36 @@ func main() {
 	if owner != "" {
 		m.hub.Show(owner, number) // the AI link: cardhub notify / events
 	}
+	quitWithTerminal(p)
 	_, err = p.Run()
 	m.hub.StopAll("CardHub quit") // waiting agents hear the watchers stopped
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+// quitWithTerminal quits p when its terminal goes away (the window or tab was
+// closed): on SIGHUP, or when writing to it fails. Without it a cardhub that
+// never got the hangup kept running unseen, holding its AI link.
+func quitWithTerminal(p *tea.Program) {
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	go func() {
+		tick := time.NewTicker(2 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-hup:
+			case <-tick.C:
+				if _, err := os.Stdout.Write(nil); err == nil { // a closed terminal gives EIO
+					continue
+				}
+			}
+			p.Quit()
+			return
+		}
+	}()
 }
 
 func printSummary(c *Client, owner string, number int, group, viewArg string) error {
