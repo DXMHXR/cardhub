@@ -33,6 +33,7 @@ type picker struct {
 	query   string
 	cursor  int
 	loading bool // project list in flight
+	split   bool // pickProject: open the project as a second board (\)
 	err     error
 	list    []ProjectRef // cached project list
 }
@@ -120,7 +121,7 @@ func (m *model) focusCurrent() {
 }
 
 func (m *model) openPicker(kind pickKind) tea.Cmd {
-	m.picker.open, m.picker.kind, m.picker.query = true, kind, ""
+	m.picker.open, m.picker.kind, m.picker.query, m.picker.split = true, kind, "", false
 	m.focusCurrent()
 	if kind != pickProject || m.picker.list != nil || m.picker.loading {
 		return nil
@@ -176,6 +177,9 @@ func (m model) pickerKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			row := list[m.picker.cursor]
 			switch m.picker.kind {
 			case pickProject:
+				if m.picker.split {
+					return m, m.openSplit(row.proj)
+				}
 				return m, m.switchProject(row.proj)
 			case pickWatcher:
 				m.confirm, m.stopTarget = confirmStopWatcher, row.board
@@ -227,15 +231,18 @@ func (m *model) switchView(i int) tea.Cmd {
 	return m.fetchCmd() // supersedes any in-flight sync
 }
 
-// pickerBox renders the dialog itself, at most maxH lines tall.
-func (m model) pickerBox(maxH int) string {
+// pickerBox renders the dialog itself, at most maxW wide and maxH lines tall.
+func (m model) pickerBox(maxW, maxH int) string {
 	h := maxH
-	w := clamp(m.width-8, 30, 64)
+	w := clamp(maxW-8, 30, 64)
 	inner := w - 4
 	accent := lipgloss.Color("#388bfd")
 	title, what := "Switch project", "projects"
-	if m.owner == "" {
+	switch {
+	case m.owner == "":
 		title = "Pick a project to watch"
+	case m.picker.split:
+		title = "Open a second board"
 	}
 	switch m.picker.kind {
 	case pickView:
@@ -245,7 +252,12 @@ func (m model) pickerBox(maxH int) string {
 	}
 
 	var b strings.Builder
-	b.WriteString(bold.Render(title) + "\n")
+	if m.split && !m.picker.split && m.picker.kind != pickWatcher { // name the board it switches
+		title = bold.Render(title) + dim.Render(" · "+trunc(m.paneName(), inner-lipgloss.Width(title)-3))
+	} else {
+		title = bold.Render(title)
+	}
+	b.WriteString(title + "\n")
 	b.WriteString(lipgloss.NewStyle().Foreground(accent).Render("› ") + m.picker.query +
 		lipgloss.NewStyle().Foreground(accent).Render("▏") + "\n\n")
 
@@ -309,6 +321,15 @@ var backdrop = lipgloss.NewStyle().Foreground(lipgloss.Color("#3d444d"))
 // overlay draws dialog centred (both ways) over screen, which is dimmed to a flat grey
 // backdrop so the dialog stands out while the board stays visible behind it.
 func overlay(screen, dialog string, width, height int) string {
+	return overlayIn(screen, dialog, width, height, rect{0, 0, width, height})
+}
+
+// rect is an area of the screen: its top-left corner and size.
+type rect struct{ x, y, w, h int }
+
+// overlayIn is overlay with the dialog centred on area r instead of the whole
+// screen (kept on screen when it's bigger than r).
+func overlayIn(screen, dialog string, width, height int, r rect) string {
 	bg := strings.Split(screen, "\n")
 	for len(bg) < height {
 		bg = append(bg, "")
@@ -318,8 +339,8 @@ func overlay(screen, dialog string, width, height int) string {
 	}
 	fg := strings.Split(dialog, "\n")
 	dw := lipgloss.Width(dialog)
-	x := max(0, (width-dw)/2)
-	y := max(0, (height-len(fg))/2)
+	x := clamp(r.x+(r.w-dw)/2, 0, max(0, width-dw))
+	y := clamp(r.y+(r.h-len(fg))/2, 0, max(0, height-len(fg)))
 	for i, l := range fg {
 		row := y + i
 		if row >= len(bg) {

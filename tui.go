@@ -41,6 +41,7 @@ type boardMsg struct {
 	meta    *ProjectMeta // set when project metadata was (re)loaded with this fetch
 	viewIdx int
 	group   string // field the snapshot is grouped by
+	pane    int    // id of the pane that asked for it
 }
 
 type clearCopiedMsg struct{}
@@ -77,11 +78,15 @@ type column struct {
 	total int    // real number of cards in the column
 }
 
-type model struct {
-	client   *Client
-	owner    string
-	number   int
-	interval time.Duration
+// pane is one board on screen: the project, view and search it shows, its
+// snapshot and the cursor in it. A split screen (\) shows two; the keys work
+// on the focused one, which is the model's embedded pane (W swaps it with
+// the other).
+type pane struct {
+	id     int // tags the pane's syncs, so a reply finds its board
+	slot   int // where a split shows it: 0 left (or top), 1 right (or bottom)
+	owner  string
+	number int
 
 	board      *Board
 	meta       *ProjectMeta
@@ -95,21 +100,53 @@ type model struct {
 	history    []map[string]int // column counts per poll, oldest first
 	changedAt  map[string]time.Time
 
-	view           view
-	col, row       int            // selected column, and the cursor within it
-	cursors        map[string]int // remembered cursor per column name
-	offsets        map[string]int // first visible card per column name
-	settings       settings       // saved between runs (Settings menu, S)
-	settingsOpen   bool
-	settingsCursor int
-
-	frame      int // animation frame for the flow connectors and pets
-	focusFrame int // frame the selected column got the cursor (pets wake up)
+	col, row   int            // selected column, and the cursor within it
+	cursors    map[string]int // remembered cursor per column name
+	offsets    map[string]int // first visible card per column name
+	focusFrame int            // frame the selected column got the cursor (pets wake up)
 
 	filter    textinput.Model
 	filtering bool
-	filterSeq int // debounce counter for the "/" search
-	saved     lastState
+	filterSeq int    // debounce counter for the "/" search
+	query     string // "/" search text the current board was fetched with
+
+	fetching  bool
+	fetchSeq  int
+	nextFetch time.Time
+	lastErr   error
+}
+
+var lastPaneID int
+
+func newPane(owner string, number int, group, viewArg string) pane {
+	ti := textinput.New()
+	ti.Prompt = "/ "
+	ti.Placeholder = "search titles, or filters like label:bug assignee:@me is:open"
+	lastPaneID++
+	return pane{
+		id: lastPaneID, owner: owner, number: number,
+		groupField: group, viewArg: viewArg, viewIdx: -1, changedAt: map[string]time.Time{},
+		cursors: map[string]int{}, offsets: map[string]int{}, focusFrame: -1000,
+		filter: ti,
+	}
+}
+
+type model struct {
+	pane          // the focused board
+	other    pane // the second board of a split screen
+	split    bool
+	bg       bool // working on the other board (see onOther): no cursor, no saving it as the last board
+	client   *Client
+	interval time.Duration
+
+	view           view
+	settings       settings // saved between runs (Settings menu, S)
+	settingsOpen   bool
+	settingsCursor int
+
+	frame int // animation frame for the flow connectors and pets
+
+	saved lastState
 
 	hub          *Hub // AI watchers, one per project; nil when not running interactively
 	nextRules    time.Time
@@ -119,7 +156,6 @@ type model struct {
 	paused       bool        // Space: the board stops refreshing (AI watchers keep running)
 	confirm      confirmKind // an open "Pause syncing?" / "Quit CardHub?" / "Stop watching?" dialog
 	stopTarget   string      // the watcher (owner/number) the stop dialog is about
-	query        string      // "/" search text the current board was fetched with
 	picker       picker
 
 	latest    string    // newest CardHub release on GitHub, once checked
@@ -128,28 +164,20 @@ type model struct {
 	updated   string    // the release installed this session (restart to use it)
 	updateErr error     // why the last update failed
 
-	fetching  bool
-	fetchSeq  int
-	nextFetch time.Time
-	lastErr   error
-	spin      spinner.Model
+	spin spinner.Model
 
 	width, height int
 }
 
 func newModel(c *Client, owner string, number int, interval time.Duration, group, viewArg string) model {
-	ti := textinput.New()
-	ti.Prompt = "/ "
-	ti.Placeholder = "search titles, or filters like label:bug assignee:@me is:open"
 	sp := spinner.New()
 	sp.Spinner = spinner.MiniDot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
 	m := model{
-		client: c, owner: owner, number: number, interval: interval,
-		groupField: group, viewArg: viewArg, viewIdx: -1, changedAt: map[string]time.Time{},
-		cursors: map[string]int{}, offsets: map[string]int{}, focusFrame: -1000,
+		pane:   newPane(owner, number, group, viewArg),
+		client: c, interval: interval,
 		settings: loadSettings(),
-		filter:   ti, spin: sp,
+		spin:     sp,
 	}
 	if owner == "" { // nothing to show yet: open on the project picker
 		m.picker = picker{open: true, kind: pickProject, loading: true}
@@ -177,20 +205,21 @@ const metaEvery = 20
 func (m *model) fetchCmd() tea.Cmd {
 	m.fetching = true
 	m.fetchSeq++
-	seq, c, owner, num := m.fetchSeq, m.client, m.owner, m.number
+	seq, id, c, owner, num := m.fetchSeq, m.id, m.client, m.owner, m.number
 	meta, idx, arg, group := m.meta, m.viewIdx, m.viewArg, m.groupField
 	if seq%metaEvery == 0 {
 		meta = nil
 	}
 	// the stats screen needs every card; the board only the ones on screen
-	full := m.view == viewStats
+	// (the other board of a split is never on the stats screen)
+	full := m.view == viewStats && !m.bg
 	search := strings.TrimSpace(m.filter.Value())
 	m.query = search
 	limits := m.cardLimits()
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		msg := boardMsg{seq: seq, viewIdx: idx}
+		msg := boardMsg{seq: seq, viewIdx: idx, pane: id}
 		if meta == nil {
 			md, err := c.FetchMeta(ctx, owner, num)
 			if err != nil {
@@ -299,6 +328,9 @@ func (m *model) checkRules() tea.Cmd {
 
 // rememberBoard saves the open project and view so plain `cardhub` reopens them.
 func (m *model) rememberBoard() {
+	if m.bg { // the focused board is the one to reopen
+		return
+	}
 	s := lastState{Owner: m.owner, Number: m.number}
 	if v := m.currentView(); v != nil {
 		s.View = v.Name
@@ -424,10 +456,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.fetchCmd()
 
 	case tickMsg:
-		var cmds []tea.Cmd
-		if !m.paused && !m.fetching && !m.nextFetch.IsZero() && time.Now().After(m.nextFetch) {
-			cmds = append(cmds, m.fetchCmd())
-		}
+		cmds := []tea.Cmd{m.dueFetch(), m.onOther(m.dueFetch)}
 		if time.Now().After(m.nextRules) { // AI watchers have their own timer, unaffected by pause
 			cmds = append(cmds, m.checkRules())
 		}
@@ -439,32 +468,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.hub.Retake()
 		m.hub.Prune(idleAfter)
-		if len(cmds) > 0 {
-			return m, tea.Batch(append(cmds, tick())...)
-		}
-		return m, tick()
+		return m, tea.Batch(append(cmds, tick())...)
 
 	case boardMsg:
-		if msg.seq != m.fetchSeq {
-			return m, nil
+		switch {
+		case msg.pane == m.id:
+			return m, m.gotBoard(msg)
+		case m.split && msg.pane == m.other.id:
+			return m, m.onOther(func() tea.Cmd { return m.gotBoard(msg) })
 		}
-		m.fetching = false
-		m.lastErr = msg.err
-		if msg.meta != nil {
-			m.meta, m.views, m.viewIdx = msg.meta, msg.meta.Views, msg.viewIdx
-			// reports name the project's main status field, whatever the view groups by
-			m.hub.Get(m.owner, m.number).SetMeta(msg.meta.Title, resolveGroup(msg.meta.Fields, ""))
-		}
-		if msg.err == nil {
-			if m.resetDiff || msg.group != m.groupField {
-				m.board, m.history, m.moves, m.resetDiff = nil, nil, nil, false
-			}
-			m.groupField = msg.group
-			m.applyBoard(msg.board)
-			m.rememberBoard()
-		}
-		m.nextFetch = time.Now().Add(m.effectiveInterval())
-		return m, m.loadMore() // the cursor may have scrolled further meanwhile
+		return m, nil // from a board that has since closed
 
 	case clearCopiedMsg:
 		m.copied = ""
@@ -529,6 +542,49 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	}
 	return m, nil
+}
+
+// dueFetch syncs the board when its interval is up.
+func (m *model) dueFetch() tea.Cmd {
+	if !m.paused && !m.fetching && !m.nextFetch.IsZero() && time.Now().After(m.nextFetch) {
+		return m.fetchCmd()
+	}
+	return nil
+}
+
+// onOther runs f on the other board of a split as if it were the focused one,
+// so the same code syncs both boards.
+func (m *model) onOther(f func() tea.Cmd) tea.Cmd {
+	if !m.split {
+		return nil
+	}
+	m.pane, m.other, m.bg = m.other, m.pane, true
+	cmd := f()
+	m.pane, m.other, m.bg = m.other, m.pane, false
+	return cmd
+}
+
+func (m *model) gotBoard(msg boardMsg) tea.Cmd {
+	if msg.seq != m.fetchSeq {
+		return nil
+	}
+	m.fetching = false
+	m.lastErr = msg.err
+	if msg.meta != nil {
+		m.meta, m.views, m.viewIdx = msg.meta, msg.meta.Views, msg.viewIdx
+		// reports name the project's main status field, whatever the view groups by
+		m.hub.Get(m.owner, m.number).SetMeta(msg.meta.Title, resolveGroup(msg.meta.Fields, ""))
+	}
+	if msg.err == nil {
+		if m.resetDiff || msg.group != m.groupField {
+			m.board, m.history, m.moves, m.resetDiff = nil, nil, nil, false
+		}
+		m.groupField = msg.group
+		m.applyBoard(msg.board)
+		m.rememberBoard()
+	}
+	m.nextFetch = time.Now().Add(m.effectiveInterval())
+	return m.loadMore() // the cursor may have scrolled further meanwhile
 }
 
 func (m *model) applyBoard(b *Board) {
@@ -675,6 +731,9 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmd, tea.Tick(400*time.Millisecond, func(time.Time) tea.Msg { return filterMsg{seq} }))
 	}
 
+	if cmd, ok := m.crossBoards(k.String()); ok { // an arrow off this board's edge, onto the other's
+		return m, cmd
+	}
 	switch k.String() {
 	case "ctrl+c": // deliberate: quits straight away
 		return m, tea.Quit
@@ -709,7 +768,7 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		// scroll within the column; past the top, jump to the column above in the grid
 		// with no cards on screen (short terminal) ↑↓ only move between rows
-		if fit := gridFit(m.width, len(m.columns)); (m.row == 0 || m.shownCards() == 0) && m.col-fit >= 0 {
+		if fit := gridFit(m.boardW(), len(m.columns)); (m.row == 0 || m.shownCards() == 0) && m.col-fit >= 0 {
 			m.moveCol(m.col - fit)
 		} else {
 			m.row--
@@ -717,7 +776,7 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.loadMore()
 	case "down", "j":
-		if fit := gridFit(m.width, len(m.columns)); m.col < len(m.columns) &&
+		if fit := gridFit(m.boardW(), len(m.columns)); m.col < len(m.columns) &&
 			(m.row >= min(m.columns[m.col].total, 100)-1 || m.shownCards() == 0) && m.col+fit < len(m.columns) {
 			m.moveCol(m.col + fit)
 		} else {
@@ -747,6 +806,14 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "p":
 		return m, m.openPicker(pickProject)
+	case "\\", "|":
+		if m.owner != "" {
+			return m, m.toggleSplit()
+		}
+	case "w", "W":
+		return m, m.switchBoard()
+	case "b", "B":
+		m.swapBoards()
 	case "s", "S":
 		m.settingsOpen, m.settingsCursor = true, 0
 		return m, nil
@@ -906,6 +973,8 @@ func (m model) View() string {
 	bodyH := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
 	var body string
 	switch {
+	case m.view == viewBoard && m.split: // each board says if it's loading or failed
+		body = m.splitView()
 	case m.board == nil && m.lastErr != nil:
 		body = errStyle.Render("  " + m.lastErr.Error())
 	case m.owner == "":
@@ -913,7 +982,7 @@ func (m model) View() string {
 	case m.board == nil:
 		body = "  " + m.spin.View() + " loading board…"
 	case m.view == viewBoard:
-		body = m.boardView(bodyH)
+		body = m.boardView(m.width, bodyH)
 	case m.view == viewStats:
 		body = m.statsView(bodyH)
 	case m.view == viewLink:
@@ -928,7 +997,11 @@ func (m model) View() string {
 		return overlay(screen, m.settingsDialog(), m.width, m.height)
 	}
 	if m.picker.open { // dialog floats over the dimmed current screen
-		return overlay(screen, m.pickerBox(m.height-4), m.width, m.height)
+		if r, ok := m.focusedRect(); ok && !m.picker.split && m.picker.kind != pickWatcher {
+			// a split's project and view menus open over the board they switch
+			return overlayIn(screen, m.pickerBox(r.w, min(m.height-4, max(r.h, 14))), m.width, m.height, r)
+		}
+		return overlay(screen, m.pickerBox(m.width, m.height-4), m.width, m.height)
 	}
 	return screen
 }
@@ -1240,8 +1313,12 @@ func (m model) footerView() string {
 	other := map[view]string{viewBoard: "Stats", viewStats: "AI link", viewLink: "Board"}[m.view]
 	keys := []string{
 		pair("←↓↑→", "Move"), pair("⏎", "Open"), pair("P", "Project"), pair("V", "View"),
+		pair("\\", pick(m.split, "Close split", "Split")),
 		pair("/", "Filter"), pair("R", "Sync"), pair("Space", pick(m.paused, "Resume", "Pause")), pair("S", "Settings"),
 		pair("+/-", "Interval"), pair("Tab", other), pair("Q", "Quit"),
+	}
+	if m.split {
+		keys = append(keys[:5], append([]string{pair("W", "Next board"), pair("B", "Swap boards")}, keys[5:]...)...)
 	}
 	if m.view == viewLink && m.hub.Status().Boards > 0 {
 		keys = append(keys[:len(keys)-1], pair("X", "Stop watcher"), pair("C", "Copy prompt"), keys[len(keys)-1])

@@ -62,8 +62,9 @@ func layoutFit(h, rows int) boxLayout {
 // shownCards is how many cards per column the board on screen shows.
 func (m model) shownCards() int {
 	n := len(m.columns)
-	fit := gridFit(m.width, n)
-	return layoutFit(m.boardH(), (n+fit-1)/max(1, fit)).vis
+	w, h := m.boardSize()
+	fit := gridFit(w, n)
+	return layoutFit(h, (n+fit-1)/max(1, fit)).vis
 }
 
 type animMsg struct{}
@@ -80,13 +81,14 @@ func gridFit(width, n int) int {
 	return clamp((width+gapW)/(minBoxW+gapW), 1, n)
 }
 
-func (m model) boardView(h int) string {
+// boardView draws the board's columns in a w×h area.
+func (m model) boardView(w, h int) string {
 	n := len(m.columns)
 	if n == 0 {
 		return dim.Render("  no items match")
 	}
-	fit := gridFit(m.width, n)
-	boxW := (m.width - (fit-1)*gapW) / fit
+	fit := gridFit(w, n)
+	boxW := (w - (fit-1)*gapW) / fit
 	rows := (n + fit - 1) / fit
 	lay := layoutFit(h, rows)
 	boxH := lay.innerH() + 2
@@ -128,7 +130,8 @@ func (m model) boardView(h int) string {
 func (m model) columnBox(ci, w int, lay boxLayout) string {
 	vis := lay.vis
 	c := m.columns[ci]
-	sel := ci == m.col
+	// the unfocused board of a split has no cursor
+	sel := ci == m.col && !m.bg
 	inner := w - 4 // border + padding
 
 	color := ghColor(c.color)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
@@ -105,7 +106,7 @@ func TestMovesLightConnectors(t *testing.T) {
 		}
 	}
 	lipgloss.SetColorProfile(termenv.TrueColor) // to tell the white streaming dot apart
-	out := m.boardView(50)
+	out := m.boardView(m.width, 50)
 	lipgloss.SetColorProfile(termenv.Ascii)
 	if white := strings.Count(out, "255;255;255m•"); white != 3 || strings.Contains(out, "×") {
 		t.Errorf("want a white dot on each of the 3 lit connectors, got %d:\n%s", white, ansi.Strip(out))
@@ -331,5 +332,126 @@ func TestColumnShown(t *testing.T) {
 		if got := columnShown(c.filter, "Status", c.col); got != c.want {
 			t.Errorf("columnShown(%q, %q) = %v, want %v", c.filter, c.col, got, c.want)
 		}
+	}
+}
+
+func TestSplitLayout(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // W saves the focused board as the last one
+	t.Setenv("XDG_CONFIG_HOME", "")
+	status := SelectField{Name: "Status", Options: []Option{{"Todo", "GRAY"}, {"Doing", "BLUE"}, {"Done", "GREEN"}}}
+	snap := func(title string) *Board {
+		it := Item{ID: title, Title: "card of " + title, Number: 1, State: "OPEN", Values: map[string]string{"Status": "Todo"}}
+		return &Board{Title: title, Fields: []SelectField{status}, Items: []Item{it}, FetchedAt: time.Now(),
+			Order: []string{"Todo", "Doing", "Done"}, Totals: map[string]int{"Todo": 1}}
+	}
+	m := newModel(nil, "o", 1, time.Minute, "", "")
+	m.applyBoard(snap("Alpha"))
+	m.openSplit(ProjectRef{Owner: "o", Number: 2})
+	m.applyBoard(snap("Beta"))
+	if !m.split || m.board.Title != "Beta" || m.other.board.Title != "Alpha" {
+		t.Fatal("the second board should open focused, next to the first")
+	}
+
+	for _, tc := range []struct {
+		w      int
+		across bool
+	}{{160, true}, {100, false}} {
+		m.width, m.height = tc.w, 50
+		if m.splitAcross() != tc.across {
+			t.Errorf("width %d: across=%v, want %v", tc.w, m.splitAcross(), tc.across)
+		}
+		out := ansi.Strip(m.View())
+		lines := strings.Split(out, "\n")
+		if len(lines) != m.height {
+			t.Errorf("width %d: %d lines, want %d", tc.w, len(lines), m.height)
+		}
+		for i, l := range lines {
+			if ansi.StringWidth(l) > tc.w {
+				t.Errorf("width %d: line %d is %d wide", tc.w, i, ansi.StringWidth(l))
+			}
+		}
+		a, b := strings.Index(out, "○ Alpha"), strings.Index(out, "● Beta")
+		if a < 0 || b < 0 {
+			t.Fatalf("width %d: want both board titles, Beta focused:\n%s", tc.w, out)
+		}
+		sameLine := !strings.Contains(out[min(a, b):max(a, b)], "\n")
+		if sameLine != tc.across {
+			t.Errorf("width %d: titles on one line=%v, want %v", tc.w, sameLine, tc.across)
+		}
+		t.Log("\n" + out)
+	}
+
+	// the focused board (Beta, on the right) gets its view menu over it, named
+	m.width = 160
+	m.views = []ProjectView{{Name: "Bug", Number: 6}}
+	m.openPicker(pickView)
+	for _, l := range strings.Split(ansi.Strip(m.View()), "\n") {
+		if i := strings.Index(l, "Switch view"); i >= 0 {
+			if ansi.StringWidth(l[:i]) < m.width/2 || !strings.Contains(l, "Beta") {
+				t.Errorf("the view menu should open over Beta, on the right:\n%s", l)
+			}
+		}
+	}
+	m.picker.open = false
+
+	m.width = 160
+	m.swapBoards() // Beta moves to the left, still focused
+	out := ansi.Strip(m.View())
+	if a, b := strings.Index(out, "○ Alpha"), strings.Index(out, "● Beta"); b < 0 || a < b || strings.Contains(out[b:a], "\n") {
+		t.Errorf("after B, Beta should be first (left), Alpha next to it:\n%s", out)
+	}
+	m.swapBoards()
+
+	m.switchBoard()
+	if m.board.Title != "Alpha" {
+		t.Error("W should focus the other board")
+	}
+	m.toggleSplit()
+	if m.split || m.board.Title != "Alpha" {
+		t.Error("closing the split keeps the focused board")
+	}
+}
+
+func TestArrowsCrossSplitBoards(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // crossing saves the focused board as the last one
+	t.Setenv("XDG_CONFIG_HOME", "")
+	status := SelectField{Name: "Status", Options: []Option{{"Todo", "GRAY"}, {"Doing", "BLUE"}, {"Done", "GREEN"}}}
+	snap := func(title string) *Board {
+		return &Board{Title: title, Fields: []SelectField{status}, FetchedAt: time.Now(),
+			Order: []string{"Todo", "Doing", "Done"}, Totals: map[string]int{}}
+	}
+	key := func(m model, k string) model {
+		t.Helper()
+		next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)})
+		return next.(model)
+	}
+	m := newModel(nil, "o", 1, time.Minute, "", "")
+	m.applyBoard(snap("Alpha"))
+	m.openSplit(ProjectRef{Owner: "o", Number: 2})
+	m.applyBoard(snap("Beta")) // focused, in slot 1: right of Alpha, or below it
+
+	m.width, m.height = 160, 50 // side by side, 2 columns abreast: Todo Doing / Done
+	m = key(m, "h")
+	if m.board.Title != "Alpha" || m.col != 1 {
+		t.Fatalf("← off Beta's left edge should land on Alpha's right end (Doing), got %s col %d", m.board.Title, m.col)
+	}
+	m = key(m, "l")
+	if m.board.Title != "Beta" || m.col != 0 {
+		t.Fatalf("→ off Alpha's right edge should land on Beta's left end, got %s col %d", m.board.Title, m.col)
+	}
+	m = key(m, "l")
+	if m.board.Title != "Beta" || m.col != 1 {
+		t.Fatalf("→ inside Beta should move along it, got %s col %d", m.board.Title, m.col)
+	}
+
+	m.width = 100 // stacked, 3 columns abreast: Alpha above, Beta below
+	m.moveCol(2)
+	m = key(m, "k")
+	if m.board.Title != "Alpha" || m.col != 2 {
+		t.Fatalf("↑ off Beta's top should land on Alpha's bottom row, same place, got %s col %d", m.board.Title, m.col)
+	}
+	m = key(m, "j")
+	if m.board.Title != "Beta" || m.col != 2 {
+		t.Fatalf("↓ off Alpha's bottom should land on Beta's top row, got %s col %d", m.board.Title, m.col)
 	}
 }

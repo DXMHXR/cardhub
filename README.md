@@ -19,6 +19,7 @@ CardHub fixes both. It's the board I keep open in a terminal tab, and it's also 
 - **Live kanban board.** Columns follow your project's Status (or a view's grouping) in a responsive grid that wraps to fit any terminal 30+ columns wide. Each column shows 3 cards and scrolls.
 - **See work move.** Animated dotted connectors show the workflow direction. When a card changes column, a white dot streams along each connector it crossed, in the direction it moved (`◂` when it went back), until you quit or switch project or view. Recently changed cards get a yellow ●.
 - **Projects and saved views.** Switch project (`P`) or saved view (`V`) from a searchable menu. A view shows the same columns as on GitHub: columns its filter leaves out (like `-status:"In Test"`) are hidden. Open a board by its name, URL or owner/number. CardHub remembers the last board and view you watched.
+- **Two boards at once.** `\` opens a second board next to the first: another project, or the same one in another view. They sit side by side when the terminal is wide enough, one above the other when it isn't. `W` (or the arrow keys at a board's edge) moves between them, `B` swaps their places.
 - **Search with GitHub filters.** `/` accepts free text or GitHub's filter syntax (`label:bug assignee:@me is:open`), and runs on GitHub, so column totals stay exact.
 - **Stats screen.** A bar and trend line per column, plus breakdowns by state and assignee.
 - **AI link.** AI agents (Claude Code or any agent that can run commands) ask CardHub to report specific card changes, then wait without polling. One CardHub can serve several agents on several projects at once. `cardhub skill install` teaches Claude Code, Codex, opencode, Cursor and other agent CLIs how to use it.
@@ -174,6 +175,9 @@ Add `--board "Roadmap"` when more than one board is open. `cardhub notify -h` li
 | `⏎` / `o` | open the selected card on GitHub (`O` opens the board) |
 | `P` | switch project: a menu of every project you can open, type to search |
 | `V` | switch saved view (or "All items") |
+| `\` | split screen: open a second board (pick a project; the same project opens the view menu), or close the split |
+| `W` | in a split: next board, moving the focus to the other board (the arrows also cross over at a board's edge) |
+| `B` | in a split: swap the boards' places, so the second becomes the first |
 | `/` | search: free text or GitHub filters like `label:bug assignee:@me is:open` (`esc` clears) |
 | `R` | refresh now |
 | `Space` | pause or resume the board's refreshing (asks first). AI watchers keep running |
@@ -193,6 +197,10 @@ Columns sit side by side while they fit and wrap onto new rows when they don't. 
 ![Saved view menu over the board](docs/views.png)
 
 The project and view menus open as dialogs over the dimmed board. Type to search, `⏎` to open.
+
+#### Split screen
+
+`\` shows two boards at once, from two projects or from one project in two views. Pick the second board's project from the menu; picking the project already on screen opens its view menu next. The boards sit side by side when each still fits two columns abreast (a terminal about 133 characters wide), and one above the other when it doesn't. Each board has a title line with its item count; the focused one has a blue dot and the cursor, and every key (`P`, `V`, `/`, moving, opening cards) works on it. The project and view menus open over the focused board and name it in their title. `W` moves the focus, and so do the arrow keys past a board's edge toward the other board (← from the right board's left edge, ↑ from the top of the lower one, and so on). `B` swaps the boards' places (left and right, or top and bottom); the focus stays on the same board. `\` closes the split, keeping the focused board. Both boards refresh on their own, each with its own API cost (about 1 point per refresh each); the Stats and AI link screens show the focused one.
 
 ### Stats
 
