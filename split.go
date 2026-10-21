@@ -227,5 +227,5 @@ func (m *model) switchBoard() tea.Cmd {
 	}
 	m.rememberBoard()
 	m.clampCursor()
-	return tea.Batch(m.statsNeedsAll(), m.loadMore())
+	return m.loadMore()
 }

@@ -21,7 +21,7 @@ CardHub fixes both. It's the board I keep open in a terminal tab, and it's also 
 - **Projects and saved views.** Switch project (`P`) or saved view (`V`) from a searchable menu. A view shows the same columns as on GitHub: columns its filter leaves out (like `-status:"In Test"`) are hidden. Open a board by its name, URL or owner/number. CardHub remembers the last board and view you watched.
 - **Two boards at once.** `\` opens a second board next to the first: another project, or the same one in another view. They sit side by side when the terminal is wide enough, one above the other when it isn't. `W` (or the arrow keys at a board's edge) moves between them, `B` swaps their places.
 - **Search with GitHub filters.** `/` accepts free text or GitHub's filter syntax (`label:bug assignee:@me is:open`), and runs on GitHub, so column totals stay exact.
-- **Stats screen.** A bar and trend line per column, plus breakdowns by state and assignee.
+- **Stats screen.** How many cards moved between columns while CardHub runs, per project and per route (`In Progress → Done`), on every board you open in the session, plus the latest moves.
 - **AI link.** AI agents (Claude Code or any agent that can run commands) ask CardHub to report specific card changes, then wait without polling. One CardHub can serve several agents on several projects at once. `cardhub skill install` teaches Claude Code, Codex, opencode, Cursor and other agent CLIs how to use it.
 - **Gentle on the GitHub API.** It loads only the cards on screen (about 1 point per refresh, whatever the board's size), adjusts its refresh rate to your hourly budget, and shows that budget as a live bar. `Space` pauses refreshing.
 - **Empty columns, your way.** "No Task" on a quiet grid by default, or little Game Boy-style pets that doze, laze or wait for food, and jump awake when the cursor lands on their column.
@@ -200,13 +200,11 @@ The project and view menus open as dialogs over the dimmed board. Type to search
 
 #### Split screen
 
-`\` shows two boards at once, from two projects or from one project in two views. Pick the second board's project from the menu; picking the project already on screen opens its view menu next. The boards sit side by side when each still fits two columns abreast (a terminal about 133 characters wide), and one above the other when it doesn't. Each board has a title line with its item count; the focused one has a blue dot and the cursor, and every key (`P`, `V`, `/`, moving, opening cards) works on it. The project and view menus open over the focused board and name it in their title. `W` moves the focus, and so do the arrow keys past a board's edge toward the other board (← from the right board's left edge, ↑ from the top of the lower one, and so on). `B` swaps the boards' places (left and right, or top and bottom); the focus stays on the same board. `\` closes the split, keeping the focused board. Both boards refresh on their own, each with its own API cost (about 1 point per refresh each); the Stats and AI link screens show the focused one.
+`\` shows two boards at once, from two projects or from one project in two views. Pick the second board's project from the menu; picking the project already on screen opens its view menu next. The boards sit side by side when each still fits two columns abreast (a terminal about 133 characters wide), and one above the other when it doesn't. Each board has a title line with its item count; the focused one has a blue dot and the cursor, and every key (`P`, `V`, `/`, moving, opening cards) works on it. The project and view menus open over the focused board and name it in their title. `W` moves the focus, and so do the arrow keys past a board's edge toward the other board (← from the right board's left edge, ↑ from the top of the lower one, and so on). `B` swaps the boards' places (left and right, or top and bottom); the focus stays on the same board. `\` closes the split, keeping the focused board. Both boards refresh on their own, each with its own API cost (about 1 point per refresh each); the AI link screen shows the focused one, and the Stats screen counts moves on both.
 
 ### Stats
 
-![Stats screen](docs/stats.png)
-
-Items per column with a share bar and a trend over recent refreshes, plus breakdowns by state and by assignee. This screen loads every card, so it's the only one that costs more than about 1 API point per refresh, and only while it's open.
+The cards that moved between columns since CardHub started, on every board it has shown: both boards of a split, and the projects you opened earlier. Each project gets its total and a bar per route (`Todo → In Progress ×3`), and the newest moves fill the rest of the screen with their time, project, card and route. A move both boards of a split see (the same project in two views) counts once. Moves come from the boards' regular refreshes, so this screen costs nothing extra, and only moves made while a board was on screen count. The counts start over when CardHub restarts.
 
 ### AI link
 
@@ -284,7 +282,6 @@ The agent reads `cardhub guide`, adds the rule with `--no-open` (so it uses the 
 GitHub doesn't push live updates for project boards, so CardHub polls its GraphQL API. Every token gets 5,000 points per hour, shared with `gh` and other tools. CardHub keeps its share small:
 
 - **The board loads only what's on screen.** One request covers every column and fetches the visible cards plus a few extra for scrolling, along with each column's exact total: about 1 point per refresh, whatever the board's size. Scrolling further loads more (`loading…` shows briefly), up to the first 100 cards of a column.
-- **Only the Stats screen loads every card** (about 3 points per 100 cards), and only while it's open.
 - **The refresh rate adjusts itself.** CardHub uses at most ~15% of the hourly budget, and at most half of what's left before it resets. `-interval` (default 30s) and `+`/`-` set the fastest rate; 5 minutes is the slowest. When it has slowed down, the footer shows `Every: 1m0s (auto)`.
 
 Moves are detected even while only some cards are loaded: exactly for cards on screen, and from changes in column totals for the rest. Archived cards are hidden.

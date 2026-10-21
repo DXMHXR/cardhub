@@ -104,19 +104,3 @@ func colName(it Item, field string) string {
 	}
 	return "No " + field
 }
-
-// tally fills in Totals and Order for a full (non-windowed) snapshot.
-func tally(b *Board, groupField string) {
-	b.Totals = map[string]int{}
-	b.Order = []string{"No " + groupField}
-	for _, f := range b.Fields {
-		if f.Name == groupField {
-			for _, o := range f.Options {
-				b.Order = append(b.Order, o.Name)
-			}
-		}
-	}
-	for _, it := range b.Items {
-		b.Totals[colName(it, groupField)]++
-	}
-}

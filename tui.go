@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
-	"sort"
 	"strings"
 	"time"
 
@@ -27,7 +26,6 @@ const (
 )
 
 const (
-	historyLen   = 60
 	flashFor     = 90 * time.Second
 	lowRateLimit = 500
 )
@@ -97,7 +95,6 @@ type pane struct {
 	moves      []move        // recent column moves, lighting up the connectors they crossed
 	groupField string
 	columns    []column
-	history    []map[string]int // column counts per poll, oldest first
 	changedAt  map[string]time.Time
 
 	col, row   int            // selected column, and the cursor within it
@@ -157,6 +154,7 @@ type model struct {
 	confirm      confirmKind // an open "Pause syncing?" / "Quit CardHub?" / "Stop watching?" dialog
 	stopTarget   string      // the watcher (owner/number) the stop dialog is about
 	picker       picker
+	moveLog      *moveLog // the Stats screen: cards moved this session, every board
 
 	latest    string    // newest CardHub release on GitHub, once checked
 	nextCheck time.Time // next look for a new release
@@ -178,6 +176,7 @@ func newModel(c *Client, owner string, number int, interval time.Duration, group
 		client: c, interval: interval,
 		settings: loadSettings(),
 		spin:     sp,
+		moveLog:  newMoveLog(),
 	}
 	if owner == "" { // nothing to show yet: open on the project picker
 		m.picker = picker{open: true, kind: pickProject, loading: true}
@@ -210,9 +209,6 @@ func (m *model) fetchCmd() tea.Cmd {
 	if seq%metaEvery == 0 {
 		meta = nil
 	}
-	// the stats screen needs every card; the board only the ones on screen
-	// (the other board of a split is never on the stats screen)
-	full := m.view == viewStats && !m.bg
 	search := strings.TrimSpace(m.filter.Value())
 	m.query = search
 	limits := m.cardLimits()
@@ -246,11 +242,7 @@ func (m *model) fetchCmd() tea.Cmd {
 			}
 		}
 		msg.group = resolveGroup(meta.Fields, group)
-		if full {
-			msg.board, msg.err = c.FetchBoard(ctx, owner, num, meta, filter)
-		} else {
-			msg.board, msg.err = c.FetchColumns(ctx, owner, num, meta, msg.group, filter, limits)
-		}
+		msg.board, msg.err = c.FetchColumns(ctx, owner, num, meta, msg.group, filter, limits)
 		return msg
 	}
 }
@@ -352,17 +344,6 @@ func (m *model) applySearch() tea.Cmd {
 	m.resetDiff = true
 	m.resetCursors()
 	return m.fetchCmd() // supersedes any in-flight sync
-}
-
-// statsNeedsAll re-syncs when the screen changes to one wanting the other fetch:
-// the stats screen loads every card, the board goes back to the cheap windowed
-// sync (and its shorter auto interval) straight away.
-func (m *model) statsNeedsAll() tea.Cmd {
-	// only the stats screen needs every card; the board and AI link screens use the cheap sync
-	if m.board == nil || m.board.Windowed == (m.view != viewStats) {
-		return nil
-	}
-	return m.fetchCmd()
 }
 
 // needsMore reports whether the selected column is scrolled past its loaded cards.
@@ -577,7 +558,7 @@ func (m *model) gotBoard(msg boardMsg) tea.Cmd {
 	}
 	if msg.err == nil {
 		if m.resetDiff || msg.group != m.groupField {
-			m.board, m.history, m.moves, m.resetDiff = nil, nil, nil, false
+			m.board, m.moves, m.resetDiff = nil, nil, false
 		}
 		m.groupField = msg.group
 		m.applyBoard(msg.board)
@@ -590,9 +571,6 @@ func (m *model) gotBoard(msg boardMsg) tea.Cmd {
 func (m *model) applyBoard(b *Board) {
 	if m.groupField == "" {
 		m.groupField = resolveGroup(b.Fields, "")
-	}
-	if !b.Windowed {
-		tally(b, m.groupField)
 	}
 	evs := Diff(m.board, b, m.groupField)
 	for _, e := range evs {
@@ -607,6 +585,7 @@ func (m *model) applyBoard(b *Board) {
 	first := m.board == nil
 	m.board = b
 	m.rebuild()
+	m.recordMoves(evs, b)
 	if first { // open on the first column that has cards
 		for i, c := range m.columns {
 			if c.total > 0 {
@@ -614,14 +593,6 @@ func (m *model) applyBoard(b *Board) {
 				break
 			}
 		}
-	}
-	counts := map[string]int{}
-	for _, c := range m.columns {
-		counts[c.name] = c.total
-	}
-	m.history = append(m.history, counts)
-	if len(m.history) > historyLen {
-		m.history = m.history[len(m.history)-historyLen:]
 	}
 }
 
@@ -751,16 +722,16 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.view = (m.view + numViews - 1) % numViews
 		}
-		return m, m.statsNeedsAll()
+		return m, nil
 	case "1":
 		m.view = viewBoard
-		return m, m.statsNeedsAll()
+		return m, nil
 	case "2":
 		m.view = viewStats
-		return m, m.statsNeedsAll()
+		return m, nil
 	case "3":
 		m.view = viewLink
-		return m, m.statsNeedsAll()
+		return m, nil
 	case "left", "h":
 		m.moveCol(m.col - 1)
 	case "right", "l":
@@ -934,20 +905,6 @@ func ghColor(c string) lipgloss.Color {
 		return lipgloss.Color(h)
 	}
 	return lipgloss.Color(ghColors["GRAY"])
-}
-
-func stateColor(s string) lipgloss.Color {
-	switch s {
-	case "OPEN":
-		return lipgloss.Color("#3fb950")
-	case "CLOSED":
-		return lipgloss.Color("#a371f7")
-	case "MERGED":
-		return lipgloss.Color("#a371f7")
-	case "DRAFT":
-		return lipgloss.Color("#8b949e")
-	}
-	return lipgloss.Color("#8b949e")
 }
 
 var (
@@ -1370,119 +1327,6 @@ func (m model) cardView(it Item, w int, sel bool, color lipgloss.Color) string {
 
 	lines := []string{bar + mark + titleSt.Render(l1), bar + " " + l2, bar + " " + l3}
 	return strings.Join(lines, "\n") + "\n"
-}
-
-func (m model) statsView(h int) string {
-	total := m.visibleCount()
-	labelW := 4
-	for _, c := range m.columns {
-		labelW = max(labelW, runewidth.StringWidth(c.name))
-	}
-	labelW = min(labelW, 28)
-	barW := clamp(m.width-labelW-40-historyLen, 10, 60)
-
-	var b strings.Builder
-	b.WriteString(bold.Render("Items by "+m.groupField) + dim.Render(fmt.Sprintf("  (%d total)", total)) + "\n\n")
-	maxN := 1
-	for _, c := range m.columns {
-		maxN = max(maxN, c.total)
-	}
-	for _, c := range m.columns {
-		n := c.total
-		fill := n * barW / maxN
-		if n > 0 && fill == 0 {
-			fill = 1
-		}
-		bar := lipgloss.NewStyle().Foreground(ghColor(c.color)).Render(strings.Repeat("█", fill)) +
-			dim.Render(strings.Repeat("░", barW-fill))
-		pct := 0.0
-		if total > 0 {
-			pct = 100 * float64(n) / float64(total)
-		}
-		name := runewidth.FillRight(trunc(c.name, labelW), labelW)
-		b.WriteString(fmt.Sprintf(" %s %s %4d %s  %s\n", name, bar, n, dim.Render(fmt.Sprintf("%3.0f%%", pct)), m.sparkline(c.name)))
-	}
-	b.WriteString("\n" + strings.Repeat(" ", labelW+barW+15) + dim.Render(fmt.Sprintf("trend over last %d syncs", len(m.history))) + "\n\n")
-
-	// state + assignee breakdowns side by side
-	state := map[string]int{}
-	people := map[string]int{}
-	for _, c := range m.columns {
-		for _, it := range c.items {
-			state[it.State]++
-			if len(it.Assignees) == 0 {
-				people["(unassigned)"]++
-			}
-			for _, a := range it.Assignees {
-				people[a]++
-			}
-		}
-	}
-	left := bold.Render("By state") + "\n" + table(state, 6, func(k string) lipgloss.Color { return stateColor(k) })
-	right := bold.Render("Top assignees") + "\n" + table(people, max(3, h-len(m.columns)-12), nil)
-	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top,
-		lipgloss.NewStyle().Width(32).PaddingLeft(1).Render(left),
-		lipgloss.NewStyle().PaddingLeft(4).Render(right)))
-	return b.String()
-}
-
-func table(counts map[string]int, limit int, color func(string) lipgloss.Color) string {
-	type kv struct {
-		k string
-		v int
-	}
-	var rows []kv
-	for k, v := range counts {
-		rows = append(rows, kv{k, v})
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].v != rows[j].v {
-			return rows[i].v > rows[j].v
-		}
-		return rows[i].k < rows[j].k
-	})
-	var b strings.Builder
-	for i, r := range rows {
-		if i >= limit {
-			b.WriteString(dim.Render(fmt.Sprintf("  … %d more\n", len(rows)-limit)))
-			break
-		}
-		name := runewidth.FillRight(trunc(strings.ToLower(r.k), 18), 18)
-		if color != nil {
-			name = lipgloss.NewStyle().Foreground(color(r.k)).Render(name)
-		}
-		b.WriteString(fmt.Sprintf("  %s %4d\n", name, r.v))
-	}
-	return b.String()
-}
-
-var sparks = []rune("▁▂▃▄▅▆▇█")
-
-func (m model) sparkline(col string) string {
-	if len(m.history) < 2 {
-		return ""
-	}
-	lo, hi := 1<<30, 0
-	for _, h := range m.history {
-		lo, hi = min(lo, h[col]), max(hi, h[col])
-	}
-	var b strings.Builder
-	for _, h := range m.history {
-		i := 0
-		if hi > lo {
-			i = (h[col] - lo) * (len(sparks) - 1) / (hi - lo)
-		}
-		b.WriteRune(sparks[i])
-	}
-	first, last := m.history[0][col], m.history[len(m.history)-1][col]
-	delta := ""
-	switch {
-	case last > first:
-		delta = lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950")).Render(fmt.Sprintf(" +%d", last-first))
-	case last < first:
-		delta = lipgloss.NewStyle().Foreground(lipgloss.Color("#f85149")).Render(fmt.Sprintf(" %d", last-first))
-	}
-	return dim.Render(b.String()) + delta
 }
 
 // ---- helpers ----

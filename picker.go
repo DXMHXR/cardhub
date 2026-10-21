@@ -206,7 +206,7 @@ func (m *model) switchProject(p ProjectRef) tea.Cmd {
 		m.hub.Show(p.Owner, p.Number)
 	}
 	m.board, m.meta, m.views, m.viewIdx, m.viewArg = nil, nil, nil, -1, ""
-	m.groupField, m.columns, m.history, m.moves = "", nil, nil, nil
+	m.groupField, m.columns, m.moves = "", nil, nil
 	m.changedAt = map[string]time.Time{}
 	m.resetDiff, m.lastErr = false, nil
 	m.filter.SetValue("")

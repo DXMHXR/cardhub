@@ -187,22 +187,6 @@ const itemFields = `
               }
             }`
 
-const boardQuery = `
-query($owner: String!, $number: Int!, $cursor: String, $q: String) {
-  rateLimit { cost remaining limit resetAt }
-  repositoryOwner(login: $owner) {
-    ... on ProjectV2Owner {
-      projectV2(number: $number) {
-        items(first: 100, after: $cursor, query: $q) {
-          pageInfo { hasNextPage endCursor }
-          nodes {` + itemFields + `
-          }
-        }
-      }
-    }
-  }
-}`
-
 type logins struct {
 	Nodes []struct{ Login string } `json:"nodes"`
 }
@@ -276,52 +260,6 @@ func (n itemNode) item() Item {
 func notFound(owner string, number int) error {
 	return fmt.Errorf("project %s/%d not found. Check the owner and number in its URL "+
 		"(github.com/orgs/<owner>/projects/<number>), and that you can open it on GitHub", owner, number)
-}
-
-// FetchBoard pulls every (non-archived) item matching filter, paging 100 at a time.
-// It is the expensive sync (about 3 points per 100 items); the board screen uses
-// FetchColumns instead and only the stats screen, which needs every card, uses this.
-// filter uses GitHub's project filter syntax and is applied server-side.
-func (c *Client) FetchBoard(ctx context.Context, owner string, number int, meta *ProjectMeta, filter string) (*Board, error) {
-	b := &Board{FetchedAt: time.Now(), Title: meta.Title, URL: meta.URL, Fields: meta.Fields, Filter: filter}
-	var cursor *string
-	for {
-		var r struct {
-			RateLimit rateLimitResp `json:"rateLimit"`
-			Owner     *struct {
-				Project *struct {
-					Items struct {
-						PageInfo struct {
-							HasNextPage bool   `json:"hasNextPage"`
-							EndCursor   string `json:"endCursor"`
-						} `json:"pageInfo"`
-						Nodes []itemNode `json:"nodes"`
-					} `json:"items"`
-				} `json:"projectV2"`
-			} `json:"repositoryOwner"`
-		}
-		vars := map[string]any{"owner": owner, "number": number, "cursor": cursor, "q": filter}
-		if err := c.graphql(ctx, boardQuery, vars, &r); err != nil {
-			return nil, err
-		}
-		if r.Owner == nil || r.Owner.Project == nil {
-			return nil, notFound(owner, number)
-		}
-		p := r.Owner.Project
-		b.RateLimit = RateLimit{r.RateLimit.Remaining, r.RateLimit.Limit, r.RateLimit.ResetAt}
-		b.Cost += r.RateLimit.Cost
-		for _, n := range p.Items.Nodes {
-			if !n.IsArchived {
-				b.Items = append(b.Items, n.item())
-			}
-		}
-		if !p.Items.PageInfo.HasNextPage {
-			break
-		}
-		end := p.Items.PageInfo.EndCursor
-		cursor = &end
-	}
-	return b, nil
 }
 
 // FieldKey is how a field is named in a filter: "Release Phase" → "release-phase".

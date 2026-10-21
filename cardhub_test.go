@@ -88,7 +88,12 @@ func TestMovesLightConnectors(t *testing.T) {
 		return Item{ID: id, Title: "card " + id, Number: 1, State: "OPEN", Values: map[string]string{"Status": st}}
 	}
 	snap := func(items ...Item) *Board {
-		return &Board{Fields: []SelectField{status}, Items: items, FetchedAt: time.Now()}
+		b := &Board{Fields: []SelectField{status}, Items: items, FetchedAt: time.Now(), Windowed: true,
+			Order: []string{"No Status", "Todo", "Doing", "Review", "Done"}, Totals: map[string]int{}}
+		for _, it := range items {
+			b.Totals[it.Values["Status"]]++
+		}
+		return b
 	}
 	m := newModel(nil, "o", 1, time.Minute, "", "")
 	m.width, m.height = 88, 60 // 2 columns per grid row: Todo→Doing ↩ Review→Done
@@ -117,6 +122,47 @@ func TestMovesLightConnectors(t *testing.T) {
 	if n, _ := m.traffic(0); n == 0 {
 		t.Error("an old move should still light the connector")
 	}
+}
+
+func TestStatsCountsMovesAcrossBoards(t *testing.T) {
+	status := SelectField{Name: "Status", Options: []Option{{"Todo", "GRAY"}, {"Review", "PURPLE"}, {"Done", "GREEN"}}}
+	snap := func(at map[string]string) *Board {
+		b := &Board{Fields: []SelectField{status}, FetchedAt: time.Now(), Windowed: true,
+			Order: []string{"No Status", "Todo", "Review", "Done"}, Totals: map[string]int{}}
+		for _, id := range []string{"a", "b"} {
+			if st, ok := at[id]; ok {
+				b.Items = append(b.Items, Item{ID: id, Title: "card " + id, Number: 7, Values: map[string]string{"Status": st}})
+				b.Totals[st]++
+			}
+		}
+		return b
+	}
+	before, after := snap(map[string]string{"a": "Todo", "b": "Done"}), snap(map[string]string{"a": "Review", "b": "Done"})
+
+	m := newModel(nil, "o", 1, time.Minute, "", "")
+	m.width, m.height = 120, 40
+	m.applyBoard(before)
+	m.applyBoard(after)
+	// a split showing the same project: its board sees the same move, counted once
+	m.other, m.split = newPane("o", 1, "", ""), true
+	m.onOther(func() tea.Cmd { m.applyBoard(before); m.applyBoard(after); return nil })
+	if s := m.moveLog.sections; len(s) != 1 || s[0].total != 1 {
+		t.Fatalf("same project in both boards: want 1 section with 1 move, got %+v", s)
+	}
+	// the split's board on another project counts on its own
+	m.other = newPane("p", 2, "", "")
+	m.onOther(func() tea.Cmd {
+		m.applyBoard(snap(map[string]string{"b": "Todo"}))
+		m.applyBoard(snap(map[string]string{"b": "Done"}))
+		return nil
+	})
+	out := ansi.Strip(m.statsView(30))
+	for _, want := range []string{"2 moves in 2 projects", "o/1", "p/2", "Todo → Review", "Todo → Done", "#7 card a"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stats screen lacks %q:\n%s", want, out)
+		}
+	}
+	t.Log("\n" + out)
 }
 
 func TestAutoInterval(t *testing.T) {
