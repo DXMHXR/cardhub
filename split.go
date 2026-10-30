@@ -68,7 +68,7 @@ func (m model) paneView(w, h int) string {
 	case m.board == nil:
 		body = "  " + m.spin.View() + " loading board…"
 	default:
-		body = m.boardView(w, h)
+		body = m.boardOrTable(w, h)
 	}
 	body = lipgloss.NewStyle().Width(w).MaxWidth(w).Height(h).MaxHeight(h).Render(body)
 	return m.paneTitle(w) + "\n" + body
@@ -141,6 +141,7 @@ func (m *model) toggleSplit() tea.Cmd {
 func (m *model) openSplit(p ProjectRef) tea.Cmd {
 	np := newPane(p.Owner, p.Number, "", "")
 	np.slot = 1 - m.slot
+	np.restore = m.saved.Searches // its first sync brings back the search saved for its view
 	same := p.Owner == m.owner && p.Number == m.number
 	if same { // the project's views are known: no need to load them again
 		np.meta, np.views = m.meta, m.views
@@ -161,6 +162,9 @@ func (m *model) openSplit(p ProjectRef) tea.Cmd {
 // edge: the same grid row when side by side, the same place in the row when
 // stacked. ok is false when the key stays on this board.
 func (m *model) crossBoards(key string) (cmd tea.Cmd, ok bool) {
+	if m.split && m.view == viewBoard && m.isTable() {
+		return m.crossFromTable(key)
+	}
 	n := len(m.columns)
 	if !m.split || m.view != viewBoard || n == 0 {
 		return nil, false
@@ -185,6 +189,9 @@ func (m *model) crossBoards(key string) (cmd tea.Cmd, ok bool) {
 		return nil, false
 	}
 	cmd = m.switchBoard()
+	if m.isTable() {
+		return tea.Batch(cmd, m.enterTable(key)), true
+	}
 	n2 := len(m.columns)
 	if n2 == 0 {
 		return cmd, true
@@ -233,7 +240,6 @@ func (m *model) switchBoard() tea.Cmd {
 		return nil
 	}
 	m.pane, m.other = m.other, m.pane
-	m.focusFrame = m.frame // its pet is startled awake
 	m.showOnHub()
 	m.rememberBoard()
 	m.clampCursor()

@@ -16,9 +16,19 @@ import (
 // ---- last project: plain `cardhub` reopens what you watched last ----
 
 type lastState struct {
-	Owner  string `json:"owner"`
-	Number int    `json:"number"`
-	View   string `json:"view,omitempty"`
+	Owner    string            `json:"owner"`
+	Number   int               `json:"number"`
+	View     string            `json:"view,omitempty"`
+	Searches map[string]string `json:"searches,omitempty"` // "/" search per board (searchKey), restored when it reopens
+}
+
+// searchKey names a board (project and view) in lastState.Searches.
+func searchKey(owner string, number int, view string) string {
+	k := fmt.Sprintf("%s/%d", owner, number)
+	if view != "" {
+		k += " › " + view
+	}
+	return k
 }
 
 func statePath() string {

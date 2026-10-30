@@ -194,34 +194,14 @@ func (m model) columnBox(ci, w int, lay boxLayout) string {
 	if lay.compact { // no title rule: every line goes to cards
 		top = top[:1]
 	}
-	if c.total == 0 {
-		// an empty column has no scroll line: centre the scene in everything
-		// between the title rule and the bottom border (the pet only when it
-		// fits whole)
-		if m.settings.Pets && m.petFits(inner, ih-len(top)) {
-			body = m.emptyState(ci, c, inner, ih-len(top), sel)
-		} else {
-			body = noTask(inner, ih-len(top)) // the default
-		}
+	if c.total == 0 { // no scroll line: "No Task" fills everything below the title rule
+		body = noTask(inner, ih-len(top))
 	}
 
 	// scroll indicator: ▲ hidden above · position · ▼ hidden below
 	var scroll string
 	if c.total > vis {
-		up, down := off, c.total-off-vis
-		pos := fmt.Sprintf("%d–%d of %d", off+1, off+vis, c.total)
-		if vis == 1 {
-			pos = fmt.Sprintf("%d of %d", off+1, c.total)
-		}
-		l, r := "  ", "  "
-		if up > 0 {
-			l = fmt.Sprintf("▲ %d", up)
-		}
-		if down > 0 {
-			r = fmt.Sprintf("%d ▼", down)
-		}
-		gap := max(1, inner-len([]rune(l))-len([]rune(r))-len([]rune(pos)))
-		scroll = dim.Render(l + strings.Repeat(" ", gap/2) + pos + strings.Repeat(" ", gap-gap/2) + r)
+		scroll = dim.Render(scrollLine(off, vis, c.total, inner))
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, append(top, body)...)
@@ -363,4 +343,43 @@ func (m model) wrapFlow(fit, boxW, k int, toColor lipgloss.Color) string {
 		lane = m.busyDots(w, -dir, toColor)
 	}
 	return strings.Repeat(" ", x0) + edge.Render("╭") + lane + dim.Render("╯")
+}
+
+// noTask is an empty column: "No Task" over a faint grid
+// that fills the space from the title rule down to the bottom border.
+func noTask(w, h int) string {
+	grid := lipgloss.NewStyle().Foreground(lipgloss.Color("#21262d"))
+	cross, bar := gridRow(w, "┼", "─"), gridRow(w, "│", " ")
+	label := " No Task "
+	mid := h / 2
+	lines := make([]string, h)
+	for y := range lines {
+		row := bar
+		if y%2 == 0 {
+			row = cross
+		}
+		if y != mid {
+			lines[y] = grid.Render(row)
+			continue
+		}
+		left := (w - len(label)) / 2
+		r := []rune(row)
+		lines[y] = grid.Render(string(r[:left])) +
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#8b949e")).Render(label) +
+			grid.Render(string(r[left+len(label):]))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// gridRow repeats a 4-wide grid cell (a joint then 3 fill characters) across w.
+func gridRow(w int, joint, fill string) string {
+	var b strings.Builder
+	for x := 0; x < w; x++ {
+		if x%4 == 0 {
+			b.WriteString(joint)
+		} else {
+			b.WriteString(fill)
+		}
+	}
+	return b.String()
 }

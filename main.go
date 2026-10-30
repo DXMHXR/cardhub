@@ -124,6 +124,9 @@ func main() {
 	}
 
 	m := newModel(client, owner, number, *interval, *group, *viewArg)
+	if last, ok := loadLast(); ok { // keep other boards' searches, and bring back this one's
+		m.saved, m.restore = last, last.Searches
+	}
 	var p *tea.Program
 	m.hub = NewHub(func(added bool) { p.Send(linkMsg{added}) })
 	p = tea.NewProgram(m, tea.WithAltScreen())
@@ -180,7 +183,7 @@ func printSummary(c *Client, owner string, number int, group, viewArg string) er
 		}
 	}
 	group = resolveGroup(meta.Fields, group)
-	b, err := c.FetchColumns(ctx, owner, number, meta, group, filter, nil)
+	b, err := c.FetchColumns(ctx, owner, number, meta, group, filter, nil, 0)
 	if err != nil {
 		return err
 	}

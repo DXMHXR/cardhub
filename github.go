@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/bits"
 	"net/http"
 	"os"
 	"os/exec"
@@ -33,6 +34,12 @@ type Board struct {
 	Totals   map[string]int
 	Order    []string
 	Filter   string // the filter the snapshot was fetched with (it can hide columns)
+
+	// Table snapshots (a TABLE_LAYOUT view) have the column totals only; Items
+	// holds the view's first rows, in its order, out of Rows.
+	Table       bool
+	Rows        int
+	TableFields []ViewField // the view's visible fields: the table's columns
 }
 
 type SelectField struct {
@@ -62,7 +69,14 @@ type Item struct {
 	Assignees []string
 	Labels    []string
 	UpdatedAt time.Time
-	Values    map[string]string // single-select field name -> option name
+	Values    map[string]string // field name -> value (single-select option, iteration, text, number, date)
+
+	// loaded for table views only
+	Milestone string
+	Parent    string // parent issue, "#12 title"
+	LinkedPRs []int
+	SubDone   int // sub-issues progress
+	SubTotal  int
 }
 
 // Ref returns a short human reference like "owner/repo#12".
@@ -163,12 +177,17 @@ func (c *Client) graphql(ctx context.Context, query string, vars map[string]any,
 	return json.Unmarshal(env.Data, out)
 }
 
-// itemFields is the selection for one project item, shared by every items query.
-const itemFields = `
+// itemSelection is the selection for one project item; the %s take the
+// issue- and PR-only extras a table shows.
+const itemSelection = `
             id type isArchived updatedAt
             fieldValues(first: 30) {
               nodes {
                 ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
+                ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } }
+                ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } }
+                ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { name } } }
+                ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } }
               }
             }
             content {
@@ -177,15 +196,27 @@ const itemFields = `
                 title number url state
                 repository { nameWithOwner }
                 assignees(first: 5) { nodes { login } }
-                labels(first: 5) { nodes { name } }
+                labels(first: 5) { nodes { name } }%s
               }
               ... on PullRequest {
                 title number url state isDraft
                 repository { nameWithOwner }
                 assignees(first: 5) { nodes { login } }
-                labels(first: 5) { nodes { name } }
+                labels(first: 5) { nodes { name } }%s
               }
             }`
+
+var (
+	// itemFields is what every board and AI link query loads per item.
+	itemFields = fmt.Sprintf(itemSelection, "", "")
+	// tableItemFields adds what only a table's columns show.
+	tableItemFields = fmt.Sprintf(itemSelection, `
+                milestone { title }
+                parent { number title }
+                subIssuesSummary { total completed }
+                closedByPullRequestsReferences(first: 5, includeClosedPrs: true) { nodes { number } }`, `
+                milestone { title }`)
+)
 
 type logins struct {
 	Nodes []struct{ Login string } `json:"nodes"`
@@ -208,8 +239,12 @@ type itemNode struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 	FieldValues struct {
 		Nodes []struct {
-			Name  string `json:"name"`
-			Field struct {
+			Name   string   `json:"name"`  // single select
+			Title  string   `json:"title"` // iteration
+			Text   string   `json:"text"`
+			Number *float64 `json:"number"`
+			Date   string   `json:"date"`
+			Field  struct {
 				Name string `json:"name"`
 			} `json:"field"`
 		} `json:"nodes"`
@@ -225,15 +260,36 @@ type itemNode struct {
 		} `json:"repository"`
 		Assignees logins `json:"assignees"`
 		Labels    names  `json:"labels"`
+		Milestone *struct {
+			Title string `json:"title"`
+		} `json:"milestone"`
+		Parent *struct {
+			Number int    `json:"number"`
+			Title  string `json:"title"`
+		} `json:"parent"`
+		SubIssues *struct {
+			Total     int `json:"total"`
+			Completed int `json:"completed"`
+		} `json:"subIssuesSummary"`
+		LinkedPRs struct {
+			Nodes []struct {
+				Number int `json:"number"`
+			} `json:"nodes"`
+		} `json:"closedByPullRequestsReferences"`
 	} `json:"content"`
 }
 
 func (n itemNode) item() Item {
 	it := Item{ID: n.ID, Kind: n.Type, UpdatedAt: n.UpdatedAt, Values: map[string]string{}}
 	for _, fv := range n.FieldValues.Nodes {
-		if fv.Field.Name != "" {
-			it.Values[fv.Field.Name] = fv.Name
+		if fv.Field.Name == "" {
+			continue
 		}
+		v := fv.Name + fv.Title + fv.Text + fv.Date // a value has only one of them
+		if fv.Number != nil {
+			v = strconv.FormatFloat(*fv.Number, 'f', -1, 64)
+		}
+		it.Values[fv.Field.Name] = v
 	}
 	if ct := n.Content; ct != nil {
 		it.Title, it.Number, it.URL, it.State = ct.Title, ct.Number, ct.URL, ct.State
@@ -246,6 +302,18 @@ func (n itemNode) item() Item {
 		}
 		for _, l := range ct.Labels.Nodes {
 			it.Labels = append(it.Labels, l.Name)
+		}
+		if ct.Milestone != nil {
+			it.Milestone = ct.Milestone.Title
+		}
+		if ct.Parent != nil {
+			it.Parent = fmt.Sprintf("#%d %s", ct.Parent.Number, ct.Parent.Title)
+		}
+		if ct.SubIssues != nil {
+			it.SubDone, it.SubTotal = ct.SubIssues.Completed, ct.SubIssues.Total
+		}
+		for _, pr := range ct.LinkedPRs.Nodes {
+			it.LinkedPRs = append(it.LinkedPRs, pr.Number)
 		}
 	}
 	if it.Kind == "DRAFT_ISSUE" {
@@ -272,6 +340,14 @@ func FieldKey(field string) string {
 // status:"A","B" only those columns show, -status:"C" hides C, no:status
 // keeps only "No Status" and has:status hides it.
 func columnShown(filter, groupField, name string) bool {
+	if bs := orBranches(filter); len(bs) > 1 { // shown when any branch shows it
+		for _, br := range bs {
+			if columnShown(br, groupField, name) {
+				return true
+			}
+		}
+		return false
+	}
 	key, none := FieldKey(groupField), "No "+groupField
 	for _, tok := range splitFilter(filter) {
 		neg := strings.HasPrefix(tok, "-")
@@ -308,10 +384,13 @@ func columnShown(filter, groupField, name string) bool {
 // query per column of groupField, each asking only for the first limits[col]
 // cards (the ones on screen, plus a little read-ahead) and the column's exact
 // total. A whole board costs about 1–2 points instead of 3 per 100 cards.
+//
+// With rows > 0 it syncs a table view instead: only the columns' totals (so
+// moves are still seen), and the view's first rows items in project order.
 func (c *Client) FetchColumns(ctx context.Context, owner string, number int, meta *ProjectMeta,
-	groupField, filter string, limits map[string]int) (*Board, error) {
+	groupField, filter string, limits map[string]int, rows int) (*Board, error) {
 	b := &Board{FetchedAt: time.Now(), Title: meta.Title, URL: meta.URL, Fields: meta.Fields,
-		Totals: map[string]int{}, Windowed: true, Filter: filter}
+		Totals: map[string]int{}, Windowed: true, Filter: filter, Table: rows > 0}
 
 	key := FieldKey(groupField)
 	type col struct{ name, query string }
@@ -329,22 +408,50 @@ func (c *Client) FetchColumns(ctx context.Context, owner string, number int, met
 		}
 	}
 
-	var q strings.Builder
+	// A search with OR branches runs each branch and merges them (see union).
+	branches := orBranches(filter)
+	if len(branches) > maxOr {
+		return nil, fmt.Errorf("a search can have at most %d OR branches", maxOr)
+	}
+	var q, sel strings.Builder
 	q.WriteString("query($owner: String!, $number: Int!")
 	vars := map[string]any{"owner": owner, "number": number}
-	for i, cl := range cols {
-		fmt.Fprintf(&q, ", $q%d: String", i)
-		vars[fmt.Sprintf("q%d", i)] = strings.TrimSpace(filter + " " + cl.query)
+	// union asks for one list of cards (a column, or a table's rows) narrowed
+	// by extra: each branch's first n cards and size, and for every mix of
+	// branches the size of their overlap, which makes the merged total exact.
+	union := func(alias, extra string, n int, fields string) {
+		for mask := 1; mask < 1<<len(branches); mask++ {
+			var parts []string
+			for i, br := range branches {
+				if mask&(1<<i) != 0 {
+					parts = append(parts, br)
+				}
+			}
+			name := fmt.Sprintf("%s_%d", alias, mask)
+			fmt.Fprintf(&q, ", $%s: String", name)
+			vars[name] = strings.TrimSpace(strings.Join(parts, " ") + " " + extra) // repeated qualifiers AND
+			if bits.OnesCount(uint(mask)) == 1 && n > 0 {
+				fmt.Fprintf(&sel, "    %s: items(first: %d, query: $%s) { totalCount nodes {%s\n    } }\n", name, n, name, fields)
+			} else {
+				fmt.Fprintf(&sel, "    %s: items(first: 0, query: $%s) { totalCount }\n", name, name)
+			}
+		}
 	}
-	q.WriteString(") {\n  rateLimit { cost remaining limit resetAt }\n  repositoryOwner(login: $owner) { ... on ProjectV2Owner { projectV2(number: $number) {\n")
+	if b.Table {
+		union("t", "", clamp(rows, 1, 100), tableItemFields)
+	}
 	for i, cl := range cols {
 		n, ok := limits[cl.name]
 		if !ok { // column not on screen yet (first sync): visible cards plus read-ahead
 			n = 2 * visibleCards
 		}
-		n = clamp(n, 1, 100)
-		fmt.Fprintf(&q, "    c%d: items(first: %d, query: $q%d) { totalCount nodes {%s\n    } }\n", i, n, i, itemFields)
+		if b.Table { // a table only needs the columns' totals
+			n = 0
+		}
+		union(fmt.Sprintf("c%d", i), cl.query, clamp(n, pick(b.Table, 0, 1), 100), itemFields)
 	}
+	q.WriteString(") {\n  rateLimit { cost remaining limit resetAt }\n  repositoryOwner(login: $owner) { ... on ProjectV2Owner { projectV2(number: $number) {\n")
+	q.WriteString(sel.String())
 	q.WriteString("  } } }\n}")
 
 	var r struct {
@@ -361,23 +468,52 @@ func (c *Client) FetchColumns(ctx context.Context, owner string, number int, met
 	}
 	b.RateLimit = RateLimit{r.RateLimit.Remaining, r.RateLimit.Limit, r.RateLimit.ResetAt}
 	b.Cost = r.RateLimit.Cost
-	for i, cl := range cols {
-		var conn struct {
-			TotalCount int        `json:"totalCount"`
-			Nodes      []itemNode `json:"nodes"`
-		}
-		if raw, ok := r.Owner.Project[fmt.Sprintf("c%d", i)]; ok {
-			if err := json.Unmarshal(raw, &conn); err != nil {
-				return nil, err
+	// read merges what union asked for: the cards of each branch once, in
+	// branch order (a branch only once every earlier one is loaded in full, so
+	// loading more never reorders them), and the union's size by
+	// inclusion–exclusion.
+	read := func(alias string) (items []Item, total int, err error) {
+		seen, complete := map[string]bool{}, true
+		for mask := 1; mask < 1<<len(branches); mask++ {
+			var conn struct {
+				TotalCount int        `json:"totalCount"`
+				Nodes      []itemNode `json:"nodes"`
 			}
+			if raw, ok := r.Owner.Project[fmt.Sprintf("%s_%d", alias, mask)]; ok {
+				if err := json.Unmarshal(raw, &conn); err != nil {
+					return nil, 0, err
+				}
+			}
+			ones := bits.OnesCount(uint(mask))
+			total += pick(ones%2 == 1, conn.TotalCount, -conn.TotalCount)
+			if ones != 1 || !complete {
+				continue
+			}
+			for _, n := range conn.Nodes {
+				if !n.IsArchived && !seen[n.ID] {
+					seen[n.ID] = true
+					items = append(items, n.item())
+				}
+			}
+			complete = len(conn.Nodes) >= conn.TotalCount
+		}
+		return items, total, nil
+	}
+	if b.Table {
+		items, total, err := read("t")
+		if err != nil {
+			return nil, err
+		}
+		b.Items, b.Rows = items, total
+	}
+	for i, cl := range cols {
+		items, total, err := read(fmt.Sprintf("c%d", i))
+		if err != nil {
+			return nil, err
 		}
 		b.Order = append(b.Order, cl.name)
-		b.Totals[cl.name] = conn.TotalCount
-		for _, n := range conn.Nodes {
-			if !n.IsArchived {
-				b.Items = append(b.Items, n.item())
-			}
-		}
+		b.Totals[cl.name] = total
+		b.Items = append(b.Items, items...)
 	}
 	return b, nil
 }
@@ -442,7 +578,14 @@ type ProjectView struct {
 	Name    string
 	Layout  string // BOARD_LAYOUT, TABLE_LAYOUT, ROADMAP_LAYOUT
 	Filter  string
-	GroupBy string // field the view groups by (board columns), if any
+	GroupBy string      // field the view groups by (board columns), if any
+	Fields  []ViewField // the fields the view shows, in order (a table's columns)
+}
+
+// ViewField is a field a view shows: its name and GitHub's data type
+// (TITLE, SINGLE_SELECT, ITERATION, ASSIGNEES, LINKED_PULL_REQUESTS…).
+type ViewField struct {
+	Name, Type string
 }
 
 // ProjectMeta is the slow-changing part of a project: its name, single-select
@@ -465,6 +608,7 @@ query($owner: String!, $number: Int!) {
         views(first: 50) {
           nodes {
             number name layout filter
+            fields(first: 30) { nodes { ... on ProjectV2FieldCommon { name dataType } } }
             verticalGroupByFields(first: 1) { nodes { ... on ProjectV2FieldCommon { name } } }
             groupByFields(first: 1) { nodes { ... on ProjectV2FieldCommon { name } } }
           }
@@ -491,10 +635,16 @@ func (c *Client) FetchMeta(ctx context.Context, owner string, number int) (*Proj
 				} `json:"fields"`
 				Views struct {
 					Nodes []struct {
-						Number   int        `json:"number"`
-						Name     string     `json:"name"`
-						Layout   string     `json:"layout"`
-						Filter   string     `json:"filter"`
+						Number int    `json:"number"`
+						Name   string `json:"name"`
+						Layout string `json:"layout"`
+						Filter string `json:"filter"`
+						Fields struct {
+							Nodes []struct {
+								Name     string `json:"name"`
+								DataType string `json:"dataType"`
+							} `json:"nodes"`
+						} `json:"fields"`
 						Vertical fieldNames `json:"verticalGroupByFields"`
 						Group    fieldNames `json:"groupByFields"`
 					} `json:"nodes"`
@@ -517,6 +667,11 @@ func (c *Client) FetchMeta(ctx context.Context, owner string, number int) (*Proj
 	}
 	for _, n := range p.Views.Nodes {
 		v := ProjectView{Number: n.Number, Name: n.Name, Layout: n.Layout, Filter: n.Filter}
+		for _, f := range n.Fields.Nodes {
+			if f.Name != "" {
+				v.Fields = append(v.Fields, ViewField{f.Name, f.DataType})
+			}
+		}
 		if len(n.Vertical.Nodes) > 0 {
 			v.GroupBy = n.Vertical.Nodes[0].Name
 		} else if len(n.Group.Nodes) > 0 {

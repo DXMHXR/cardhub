@@ -209,17 +209,26 @@ func (m *model) switchProject(p ProjectRef) tea.Cmd {
 	m.resetDiff, m.lastErr = false, nil
 	m.filter.SetValue("")
 	m.query = ""
+	m.restore = m.saved.Searches // its first sync brings back the search saved for its view
 	m.resetCursors()
 	m.view = viewBoard
 	return m.fetchCmd() // supersedes any in-flight sync of the old project
 }
 
-// switchView applies saved view i (-1 = all items) and refetches with its filter.
+// switchView applies saved view i (-1 = all items) and refetches with its
+// filter. Each view keeps its own "/" search: the one left is saved, the new
+// one's comes back (none if it never had one).
 func (m *model) switchView(i int) tea.Cmd {
 	if i == m.viewIdx {
 		return nil
 	}
+	m.rememberBoard()
 	m.viewIdx = i
+	name := ""
+	if v := m.currentView(); v != nil {
+		name = v.Name
+	}
+	m.filter.SetValue(m.saved.Searches[searchKey(m.owner, m.number, name)])
 	if i >= 0 && m.views[i].GroupBy != "" {
 		m.groupField = m.views[i].GroupBy
 	}

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -202,65 +201,6 @@ func TestMatchProject(t *testing.T) {
 	}
 }
 
-// The fish stays inside its bowl: the glass (columns 2 and 19) is never drawn over.
-func TestFishStaysInBowl(t *testing.T) {
-	for step := 0; step < 60; step++ {
-		for _, md := range []mood{{}, {awake: true, since: 9}} {
-			p := scenes[3](step, md)
-			for y := 4; y < 12; y++ {
-				if p[y][2] != 'a' || p[y][19] != 'a' {
-					t.Fatalf("step %d mood %+v: glass at row %d is %q/%q", step, md, y, p[y][2], p[y][19])
-				}
-			}
-		}
-	}
-}
-
-// TestScenes plays every empty-column scene for a while (go test -run
-// TestScenes -v shows a few steps of each as pixel codes) and checks every
-// pixel uses a known palette code.
-func TestScenes(t *testing.T) {
-	known := palette("BLUE", true)
-	for i, sc := range scenes {
-		var shots []string
-		for step := 0; step < 60; step++ {
-			md := mood{awake: step >= 30, since: step - 30} // idle, then woken up
-			p := sc(step, md)
-			var rows []string
-			for _, row := range p {
-				var b strings.Builder
-				for _, px := range row {
-					if px == 0 {
-						b.WriteByte('.')
-						continue
-					}
-					if _, ok := known[px]; !ok {
-						t.Fatalf("scene %d step %d: unknown pixel code %q", i, step, px)
-					}
-					b.WriteByte(px)
-				}
-				rows = append(rows, b.String())
-			}
-			if step%7 == 0 && step < 21 {
-				shots = append(shots, fmt.Sprintf("step %d:\n%s", step, strings.Join(rows, "\n")))
-			}
-		}
-		t.Logf("scene %d\n%s", i, strings.Join(shots, "\n"))
-	}
-}
-
-// Empty-column animations are off unless the user turned them on.
-func TestPetsOffByDefault(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	if loadSettings().Pets {
-		t.Fatal("with no settings file, animations should be off")
-	}
-	saveSettings(settings{Pets: true})
-	if !loadSettings().Pets {
-		t.Fatal("turning animations on should be saved")
-	}
-}
-
 func TestIsRelease(t *testing.T) {
 	for v, want := range map[string]bool{
 		"v0.1.0": true, "v1.2.3": true, "(devel)": false, "": false,
@@ -270,35 +210,6 @@ func TestIsRelease(t *testing.T) {
 	} {
 		if got := isRelease(v); got != want {
 			t.Errorf("isRelease(%q) = %v, want %v", v, got, want)
-		}
-	}
-}
-
-// TestPetsGallery writes animation frames of every pet, in a range of column
-// colours, for the README (CARDHUB_GALLERY=<dir> go test -run TestPetsGallery).
-func TestPetsGallery(t *testing.T) {
-	dir := os.Getenv("CARDHUB_GALLERY")
-	if dir == "" {
-		t.Skip("set CARDHUB_GALLERY to a folder to write the frames")
-	}
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	colors := []string{"GREEN", "YELLOW", "ORANGE", "BLUE", "GREEN", "PINK", "PURPLE", "RED"}
-	for step := 0; step < 48; step++ {
-		var out []string
-		for row := 0; row < 2; row++ {
-			var cells []string
-			for i := row * 4; i < row*4+4; i++ {
-				md := mood{}
-				if step >= 32 && i%2 == 0 { // every other pet wakes up near the end
-					md = mood{awake: true, since: step - 32}
-				}
-				cells = append(cells, strings.Join(scenes[i](step, md).render(palette(colors[i], true)), "\n"), "  ")
-			}
-			out = append(out, lipgloss.JoinHorizontal(lipgloss.Top, cells...), "")
-		}
-		name := filepath.Join(dir, fmt.Sprintf("f%02d.ansi", step))
-		if err := os.WriteFile(name, []byte(strings.Join(out, "\n")), 0o644); err != nil {
-			t.Fatal(err)
 		}
 	}
 }
@@ -499,5 +410,147 @@ func TestArrowsCrossSplitBoards(t *testing.T) {
 	m = key(m, "j")
 	if m.board.Title != "Beta" || m.col != 2 {
 		t.Fatalf("↓ off Alpha's bottom should land on Beta's top row, got %s col %d", m.board.Title, m.col)
+	}
+}
+
+func TestTableKeepsTitleStatusAndIteration(t *testing.T) {
+	status := SelectField{Name: "Status", Options: []Option{{"Todo", "GRAY"}, {"In Progress", "BLUE"}, {"Done", "GREEN"}}}
+	b := &Board{Fields: []SelectField{status}, FetchedAt: time.Now(), Windowed: true, Table: true,
+		Order: []string{"No Status", "Todo", "In Progress", "Done"}, Totals: map[string]int{"Todo": 1, "Done": 1}, Rows: 2,
+		TableFields: []ViewField{{"Title", "TITLE"}, {"Assignees", "ASSIGNEES"}, {"Status", "SINGLE_SELECT"},
+			{"Linked pull requests", "LINKED_PULL_REQUESTS"}, {"Sub-issues progress", "SUB_ISSUES_PROGRESS"},
+			{"Release Plan", "ITERATION"}, {"Priority", "SINGLE_SELECT"}},
+		Items: []Item{
+			{ID: "a", Title: "Scan barcode camera: popup in sync with the cart, without double counting", Number: 1,
+				Assignees: []string{"someone"}, LinkedPRs: []int{855}, SubDone: 1, SubTotal: 4,
+				Values: map[string]string{"Status": "Todo", "Release Plan": "Release Nov W1", "Priority": "P1"}},
+			{ID: "b", Title: "Short one", Number: 2, Values: map[string]string{"Status": "Done", "Release Plan": "Release Oct W5"}},
+		}}
+	m := newModel(nil, "o", 1, time.Minute, "", "")
+	m.width, m.height = 160, 30
+	m.applyBoard(b)
+
+	for _, w := range []int{160, 90, 50} {
+		_, cols, hidden := m.tableColumns(w - 4)
+		var names []string
+		for _, c := range cols {
+			names = append(names, c.f.Name)
+		}
+		got := strings.Join(names, ",")
+		if !strings.Contains(got, "Status") || !strings.Contains(got, "Release Plan") {
+			t.Errorf("width %d: Status and Release Plan must stay, got %q", w, got)
+		}
+		if w == 160 && hidden != 0 {
+			t.Errorf("width 160: nothing should be hidden, got %q", got)
+		}
+		if w == 50 && got != "Status,Release Plan" {
+			t.Errorf("width 50: only Status and Release Plan next to Title, got %q", got)
+		}
+		out := ansi.Strip(m.tableView(w, 12))
+		for _, line := range strings.Split(out, "\n") {
+			if lipgloss.Width(line) > w {
+				t.Errorf("width %d: line overflows: %q", w, line)
+			}
+		}
+		if !strings.Contains(out, "Release Oct W5") && w > 50 {
+			t.Errorf("width %d: Release Plan values missing:\n%s", w, out)
+		}
+		t.Log("\n" + out)
+	}
+}
+
+func TestSearchSavedPerBoard(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // last.json goes to a scratch config dir
+	t.Setenv("XDG_CONFIG_HOME", "")
+	board := func() *Board {
+		return &Board{FetchedAt: time.Now(), Windowed: true, Order: []string{"Todo"}, Totals: map[string]int{"Todo": 0}}
+	}
+	m := newModel(nil, "o", 1, time.Minute, "", "")
+	m.views, m.viewIdx = []ProjectView{{Number: 3, Name: "Bugs"}}, 0
+	m.query = "assignee:@me"
+	m.rememberBoard()
+
+	// another project, without a search: the first board's search stays saved
+	m2 := newModel(nil, "o", 2, time.Minute, "", "")
+	m2.saved = m.saved
+	m2.rememberBoard()
+	last, _ := loadLast()
+	if last.Number != 2 || last.Searches["o/1 › Bugs"] != "assignee:@me" {
+		t.Fatalf("want board o/2 opened last and o/1's search kept, got %+v", last)
+	}
+
+	// reopening o/1 › Bugs: its first sync brings the search back into the box
+	m3 := newModel(nil, "o", 1, time.Minute, "", "Bugs")
+	m3.saved, m3.restore = last, last.Searches
+	m3.fetchSeq = 1
+	m3.gotBoard(boardMsg{seq: 1, board: board(), viewIdx: 0, search: "assignee:@me", meta: &ProjectMeta{Views: m.views}})
+	if m3.filter.Value() != "assignee:@me" || m3.query != "assignee:@me" || m3.restore != nil {
+		t.Fatalf("search not restored: box %q, query %q", m3.filter.Value(), m3.query)
+	}
+
+	// clearing it forgets it
+	m3.filter.SetValue("")
+	m3.query = ""
+	m3.rememberBoard()
+	if last, _ := loadLast(); len(last.Searches) != 0 {
+		t.Fatalf("cleared search should be forgotten, got %v", last.Searches)
+	}
+}
+
+func TestEachViewKeepsItsSearch(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	m := newModel(nil, "o", 1, time.Minute, "", "")
+	m.views = []ProjectView{{Number: 1, Name: "Bug"}, {Number: 2, Name: "Release Plan"}}
+	m.viewIdx = 0
+	m.filter.SetValue("label:bug assignee:rahmanto1")
+	m.query = m.filter.Value()
+
+	m.switchView(1) // Release Plan never had a search
+	if m.filter.Value() != "" || m.query != "" {
+		t.Fatalf("Release Plan should start without the Bug search, got %q", m.filter.Value())
+	}
+	m.filter.SetValue("assignee:@me")
+	m.query = m.filter.Value()
+
+	m.switchView(0)
+	if m.filter.Value() != "label:bug assignee:rahmanto1" {
+		t.Fatalf("Bug should get its search back, got %q", m.filter.Value())
+	}
+	m.switchView(1)
+	if m.filter.Value() != "assignee:@me" {
+		t.Fatalf("Release Plan should get its search back, got %q", m.filter.Value())
+	}
+	if last, _ := loadLast(); len(last.Searches) != 2 {
+		t.Fatalf("both views' searches should be saved, got %v", last.Searches)
+	}
+}
+
+func TestOrBranches(t *testing.T) {
+	for f, want := range map[string][]string{
+		"":                             {""},
+		"label:bug is:open":            {"label:bug is:open"},
+		"assignee:@me OR no:assignee":  {"assignee:@me", "no:assignee"},
+		"assignee:@me | no:assignee":   {"assignee:@me", "no:assignee"},
+		"assignee:@me|no:assignee":     {"assignee:@me", "no:assignee"},
+		`status:"A|B" OR label:x`:      {`status:"A|B"`, "label:x"},
+		"OR label:x OR":                {"label:x"},
+		"color or size":                {"color or size"}, // only a capital OR splits
+		`title:"this OR that"`:         {`title:"this OR that"`},
+		"label:a OR label:b | label:c": {"label:a", "label:b", "label:c"},
+	} {
+		if got := orBranches(f); strings.Join(got, "‖") != strings.Join(want, "‖") {
+			t.Errorf("orBranches(%q) = %q, want %q", f, got, want)
+		}
+	}
+	if got := andFilter("-status:Done", "assignee:@me OR no:assignee"); got != "-status:Done assignee:@me OR -status:Done no:assignee" {
+		t.Errorf("andFilter: the view's filter should narrow every branch, got %q", got)
+	}
+	if got := andFilter("-status:Done", "label:bug"); got != "-status:Done label:bug" {
+		t.Errorf("andFilter without OR: got %q", got)
+	}
+	// a column a branch shows stays
+	if !columnShown(`status:"Todo" OR status:"Done"`, "Status", "Done") || columnShown(`status:"Todo" OR status:"Done"`, "Status", "Doing") {
+		t.Error("columnShown should show the columns any branch shows, and only those")
 	}
 }

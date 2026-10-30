@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -40,6 +41,7 @@ type boardMsg struct {
 	viewIdx int
 	group   string // field the snapshot is grouped by
 	pane    int    // id of the pane that asked for it
+	search  string // a search saved last run, applied to this sync
 }
 
 type clearCopiedMsg struct{}
@@ -97,15 +99,17 @@ type pane struct {
 	columns    []column
 	changedAt  map[string]time.Time
 
-	col, row   int            // selected column, and the cursor within it
-	cursors    map[string]int // remembered cursor per column name
-	offsets    map[string]int // first visible card per column name
-	focusFrame int            // frame the selected column got the cursor (pets wake up)
+	col, row int            // selected column, and the cursor within it
+	cursors  map[string]int // remembered cursor per column name
+	offsets  map[string]int // first visible card per column name
+	tableRow int            // cursor in a table view
+	tableOff int            // first row of a table view on screen
 
 	filter    textinput.Model
 	filtering bool
-	filterSeq int    // debounce counter for the "/" search
-	query     string // "/" search text the current board was fetched with
+	filterSeq int               // debounce counter for the "/" search
+	query     string            // "/" search text the current board was fetched with
+	restore   map[string]string // searches saved last run: the first sync picks this board's up
 
 	fetching  bool
 	fetchSeq  int
@@ -118,12 +122,12 @@ var lastPaneID int
 func newPane(owner string, number int, group, viewArg string) pane {
 	ti := textinput.New()
 	ti.Prompt = "/ "
-	ti.Placeholder = "search titles, or filters like label:bug assignee:@me is:open"
+	ti.Placeholder = "search titles, or filters like label:bug assignee:@me is:open (OR for either)"
 	lastPaneID++
 	return pane{
 		id: lastPaneID, owner: owner, number: number,
 		groupField: group, viewArg: viewArg, viewIdx: -1, changedAt: map[string]time.Time{},
-		cursors: map[string]int{}, offsets: map[string]int{}, focusFrame: -1000,
+		cursors: map[string]int{}, offsets: map[string]int{},
 		filter: ti,
 	}
 }
@@ -136,12 +140,9 @@ type model struct {
 	client   *Client
 	interval time.Duration
 
-	view           view
-	settings       settings // saved between runs (Settings menu, S)
-	settingsOpen   bool
-	settingsCursor int
+	view view
 
-	frame int // animation frame for the flow connectors and pets
+	frame int // animation frame for the flow connectors
 
 	saved lastState
 
@@ -174,9 +175,8 @@ func newModel(c *Client, owner string, number int, interval time.Duration, group
 	m := model{
 		pane:   newPane(owner, number, group, viewArg),
 		client: c, interval: interval,
-		settings: loadSettings(),
-		spin:     sp,
-		moveLog:  newMoveLog(),
+		spin:    sp,
+		moveLog: newMoveLog(),
 	}
 	if owner == "" { // nothing to show yet: open on the project picker
 		m.picker = picker{open: true, kind: pickProject, loading: true}
@@ -212,6 +212,11 @@ func (m *model) fetchCmd() tea.Cmd {
 	search := strings.TrimSpace(m.filter.Value())
 	m.query = search
 	limits := m.cardLimits()
+	rows := m.tableLimit()
+	restore := m.restore
+	if search != "" {
+		restore = nil // a search typed already wins
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
@@ -233,16 +238,28 @@ func (m *model) fetchCmd() tea.Cmd {
 		if msg.viewIdx >= len(meta.Views) {
 			msg.viewIdx = -1
 		}
-		filter := search
+		var v ProjectView
 		if msg.viewIdx >= 0 {
-			v := meta.Views[msg.viewIdx]
-			filter = strings.TrimSpace(v.Filter + " " + search)
+			v = meta.Views[msg.viewIdx]
+		}
+		if s := restore[searchKey(owner, num, v.Name)]; s != "" {
+			search, msg.search = s, s
+		}
+		filter, table := search, 0
+		if msg.viewIdx >= 0 {
+			filter = andFilter(v.Filter, search)
 			if group == "" {
 				group = v.GroupBy
 			}
+			if v.Layout == "TABLE_LAYOUT" {
+				table = rows
+			}
 		}
 		msg.group = resolveGroup(meta.Fields, group)
-		msg.board, msg.err = c.FetchColumns(ctx, owner, num, meta, msg.group, filter, limits)
+		msg.board, msg.err = c.FetchColumns(ctx, owner, num, meta, msg.group, filter, limits, table)
+		if msg.board != nil && msg.board.Table {
+			msg.board.TableFields = v.Fields
+		}
 		return msg
 	}
 }
@@ -318,7 +335,8 @@ func (m *model) checkRules() tea.Cmd {
 	}
 }
 
-// rememberBoard saves the open project and view so plain `cardhub` reopens them.
+// rememberBoard saves the open project and view so plain `cardhub` reopens
+// them, and the board's "/" search so it comes back with it.
 func (m *model) rememberBoard() {
 	if m.bg { // the focused board is the one to reopen
 		return
@@ -327,7 +345,17 @@ func (m *model) rememberBoard() {
 	if v := m.currentView(); v != nil {
 		s.View = v.Name
 	}
-	if s != m.saved {
+	s.Searches = maps.Clone(m.saved.Searches)
+	if key := searchKey(m.owner, m.number, s.View); m.query != "" {
+		if s.Searches == nil {
+			s.Searches = map[string]string{}
+		}
+		s.Searches[key] = m.query
+	} else {
+		delete(s.Searches, key)
+	}
+	if s.Owner != m.saved.Owner || s.Number != m.saved.Number || s.View != m.saved.View ||
+		!maps.Equal(s.Searches, m.saved.Searches) {
 		saveLast(s)
 		m.saved = s
 	}
@@ -348,6 +376,9 @@ func (m *model) applySearch() tea.Cmd {
 
 // needsMore reports whether the selected column is scrolled past its loaded cards.
 func (m model) needsMore() bool {
+	if m.isTable() {
+		return len(m.board.Items) < min(m.tableOff+m.tableRows(), m.board.Rows, 100)
+	}
 	if m.board == nil || !m.board.Windowed || m.col >= len(m.columns) {
 		return false
 	}
@@ -514,9 +545,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.confirm != confirmNone {
 			return m.confirmKey(msg)
 		}
-		if m.settingsOpen {
-			return m.settingsKey(msg)
-		}
 		if m.picker.open {
 			return m.pickerKey(msg)
 		}
@@ -557,6 +585,13 @@ func (m *model) gotBoard(msg boardMsg) tea.Cmd {
 		m.hub.Get(m.owner, m.number).SetMeta(msg.meta.Title, resolveGroup(msg.meta.Fields, ""))
 	}
 	if msg.err == nil {
+		if m.restore != nil {
+			m.restore = nil // only the board cardhub opens on gets its search back
+			if msg.search != "" && m.filter.Value() == "" {
+				m.filter.SetValue(msg.search)
+				m.query = msg.search
+			}
+		}
 		if m.resetDiff || msg.group != m.groupField {
 			m.board, m.moves, m.resetDiff = nil, nil, false
 		}
@@ -637,6 +672,7 @@ func (m *model) rebuild() {
 }
 
 func (m *model) clampCursor() {
+	m.clampTable()
 	if len(m.columns) == 0 {
 		m.col, m.row = 0, 0
 		return
@@ -663,7 +699,6 @@ func (m *model) moveCol(i int) {
 		return
 	}
 	if c := clamp(i, 0, len(m.columns)-1); c != m.col {
-		m.focusFrame = m.frame // an empty column's pet is startled awake
 		m.col = c
 	}
 	m.row = m.cursors[m.columns[m.col].name]
@@ -673,9 +708,16 @@ func (m *model) moveCol(i int) {
 func (m *model) resetCursors() {
 	m.col, m.row = 0, 0
 	m.cursors, m.offsets = map[string]int{}, map[string]int{}
+	m.tableRow, m.tableOff = 0, 0
 }
 
 func (m model) selected() (Item, bool) {
+	if m.isTable() {
+		if m.tableRow < len(m.board.Items) {
+			return m.board.Items[m.tableRow], true
+		}
+		return Item{}, false
+	}
 	if m.col < len(m.columns) && m.row < len(m.columns[m.col].items) {
 		return m.columns[m.col].items[m.row], true
 	}
@@ -704,6 +746,11 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if cmd, ok := m.crossBoards(k.String()); ok { // an arrow off this board's edge, onto the other's
 		return m, cmd
+	}
+	if m.isTable() && m.view == viewBoard {
+		if cmd, ok := m.tableKey(k.String()); ok {
+			return m, cmd
+		}
 	}
 	switch k.String() {
 	case "ctrl+c": // deliberate: quits straight away
@@ -785,9 +832,6 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.switchBoard()
 	case "b", "B":
 		m.swapBoards()
-	case "s", "S":
-		m.settingsOpen, m.settingsCursor = true, 0
-		return m, nil
 	case "x", "X": // stop a watcher (AI link screen)
 		if m.view == viewLink && m.hub.Status().Boards > 0 {
 			return m, m.openPicker(pickWatcher)
@@ -939,7 +983,7 @@ func (m model) View() string {
 	case m.board == nil:
 		body = "  " + m.spin.View() + " loading board…"
 	case m.view == viewBoard:
-		body = m.boardView(m.width, bodyH)
+		body = m.boardOrTable(m.width, bodyH)
 	case m.view == viewStats:
 		body = m.statsView(bodyH)
 	case m.view == viewLink:
@@ -949,9 +993,6 @@ func (m model) View() string {
 	screen := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 	if m.confirm != confirmNone {
 		return overlay(screen, m.confirmDialog(), m.width, m.height)
-	}
-	if m.settingsOpen {
-		return overlay(screen, m.settingsDialog(), m.width, m.height)
 	}
 	if m.picker.open { // dialog floats over the dimmed current screen
 		if r, ok := m.focusedRect(); ok && !m.picker.split && m.picker.kind != pickWatcher {
@@ -1271,7 +1312,7 @@ func (m model) footerView() string {
 	keys := []string{
 		pair("←↓↑→", "Move"), pair("⏎", "Open"), pair("P", "Project"), pair("V", "View"),
 		pair("\\", pick(m.split, "Close split", "Split")),
-		pair("/", "Filter"), pair("R", "Sync"), pair("Space", pick(m.paused, "Resume", "Pause")), pair("S", "Settings"),
+		pair("/", "Filter"), pair("R", "Sync"), pair("Space", pick(m.paused, "Resume", "Pause")),
 		pair("+/-", "Interval"), pair("Tab", other), pair("Q", "Quit"),
 	}
 	if m.split {
