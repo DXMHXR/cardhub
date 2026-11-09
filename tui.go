@@ -344,7 +344,7 @@ func (m *model) rememberBoard() {
 	if m.bg { // the focused board is the one to reopen
 		return
 	}
-	s := lastState{Owner: m.owner, Number: m.number, PRRepo: m.saved.PRRepo}
+	s := lastState{Owner: m.owner, Number: m.number, PRRepos: maps.Clone(m.saved.PRRepos)}
 	if v := m.currentView(); v != nil {
 		s.View = v.Name
 	}

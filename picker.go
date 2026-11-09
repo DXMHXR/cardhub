@@ -217,6 +217,7 @@ func (m *model) switchProject(p ProjectRef) tea.Cmd {
 	m.query = ""
 	m.restore = m.saved.Searches // its first sync brings back the search saved for its view
 	m.resetCursors()
+	m.leaveRepo()
 	m.view = viewBoard
 	return m.fetchCmd() // supersedes any in-flight sync of the old project
 }

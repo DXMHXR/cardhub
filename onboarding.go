@@ -20,7 +20,8 @@ type lastState struct {
 	Number   int               `json:"number"`
 	View     string            `json:"view,omitempty"`
 	Searches map[string]string `json:"searches,omitempty"` // "/" search per board (searchKey), restored when it reopens
-	PRRepo   string            `json:"pr_repo,omitempty"`  // the Pull requests screen's repo
+	PRRepos  map[string]string `json:"pr_repos,omitempty"` // the Pull requests screen's repo per project (projectKey)
+	PRRepo   string            `json:"pr_repo,omitempty"`  // v0.7 kept one repo for every project; read once, moved into PRRepos
 }
 
 // searchKey names a board (project and view) in lastState.Searches.
@@ -45,6 +46,15 @@ func loadLast() (lastState, bool) {
 	b, err := os.ReadFile(statePath())
 	if err != nil || json.Unmarshal(b, &s) != nil || s.Owner == "" || s.Number <= 0 {
 		return lastState{}, false
+	}
+	if s.PRRepo != "" { // v0.7's single repo was picked on the board it saved
+		if key := searchKey(s.Owner, s.Number, ""); s.PRRepos[key] == "" {
+			if s.PRRepos == nil {
+				s.PRRepos = map[string]string{}
+			}
+			s.PRRepos[key] = s.PRRepo
+		}
+		s.PRRepo = ""
 	}
 	return s, true
 }

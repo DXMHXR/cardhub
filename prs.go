@@ -247,6 +247,14 @@ func (m model) repoRows() []pickRow {
 	return rows
 }
 
+// leaveRepo empties the screen when the board moves to another project, which
+// has its own repo; the repo lists stay cached.
+func (m *model) leaveRepo() {
+	m.prs.seq++ // drops a fetch still on its way
+	m.prs.repo, m.prs.data, m.prs.err, m.prs.loading = "", nil, nil, false
+	m.prs.row, m.prs.off, m.prs.closed, m.prs.shown = 0, 0, false, false
+}
+
 // switchRepo shows another repo's pull requests.
 func (m *model) switchRepo(repo string) tea.Cmd {
 	m.view = viewPRs
@@ -254,17 +262,23 @@ func (m *model) switchRepo(repo string) tea.Cmd {
 		return nil
 	}
 	m.prs.repo, m.prs.data, m.prs.err, m.prs.row, m.prs.off = repo, nil, nil, 0, 0
-	m.saved.PRRepo = repo
-	saveLast(m.saved)
+	if key := m.projectKey(); key != "" {
+		if m.saved.PRRepos == nil {
+			m.saved.PRRepos = map[string]string{}
+		}
+		m.saved.PRRepos[key] = repo
+		saveLast(m.saved)
+	}
 	return m.fetchPRs()
 }
 
-// enterPRs is called when the screen comes up: it asks for a repo the first
-// time, and refreshes a list that's gone stale meanwhile.
+// enterPRs is called when the screen comes up: it opens the repo last picked
+// for this project, asks for one the first time, and refreshes a list that's
+// gone stale meanwhile.
 func (m *model) enterPRs() tea.Cmd {
 	if m.prs.repo == "" {
-		if m.saved.PRRepo != "" {
-			m.prs.repo = m.saved.PRRepo
+		if r := m.saved.PRRepos[m.projectKey()]; r != "" {
+			m.prs.repo = r
 		} else {
 			return m.openRepoPicker()
 		}

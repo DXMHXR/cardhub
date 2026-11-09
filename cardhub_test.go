@@ -555,26 +555,54 @@ func TestOrBranches(t *testing.T) {
 	}
 }
 
-func TestPRRepoSurvivesBoardSaves(t *testing.T) {
+func TestPRRepoIsPerProject(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
 	m := newModel(nil, "o", 1, time.Minute, "", "")
 	m.rememberBoard()
 	m.switchRepo("o/app")
 
-	m.number = 2 // another board saved afterwards keeps the repo
-	m.rememberBoard()
+	// another project starts without a repo: the menu asks
+	m.switchProject(ProjectRef{Owner: "o", Number: 2})
+	if m.prs.repo != "" || m.prs.data != nil {
+		t.Fatalf("project o/2 should start with no repo, got %q", m.prs.repo)
+	}
+	m.enterPRs()
+	if !m.picker.open {
+		t.Fatal("want the repo menu on a project with no repo yet")
+	}
+	m.picker.open = false
+	m.switchRepo("o/web")
+	m.rememberBoard() // saving the board keeps both repos
+
 	last, _ := loadLast()
-	if last.PRRepo != "o/app" || last.Number != 2 {
-		t.Fatalf("want board o/2 and repo o/app saved, got %+v", last)
+	if last.PRRepos["o/1"] != "o/app" || last.PRRepos["o/2"] != "o/web" || last.Number != 2 {
+		t.Fatalf("want o/1→o/app and o/2→o/web saved, got %+v", last)
 	}
 
-	// next run: the Pull requests screen opens on it without asking
+	// back on o/1, and on the next run: each opens its own repo without asking
+	m.switchProject(ProjectRef{Owner: "o", Number: 1})
+	m.enterPRs()
+	if m.prs.repo != "o/app" || m.picker.open {
+		t.Fatalf("o/1: want repo o/app and no picker, got %q, picker %v", m.prs.repo, m.picker.open)
+	}
 	m2 := newModel(nil, "o", 2, time.Minute, "", "")
 	m2.saved = last
 	m2.enterPRs()
-	if m2.prs.repo != "o/app" || m2.picker.open {
-		t.Fatalf("want repo o/app and no picker, got repo %q, picker %v", m2.prs.repo, m2.picker.open)
+	if m2.prs.repo != "o/web" || m2.picker.open {
+		t.Fatalf("o/2: want repo o/web and no picker, got %q, picker %v", m2.prs.repo, m2.picker.open)
+	}
+}
+
+func TestOldPRRepoMovesToItsProject(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	p := statePath()
+	_ = os.MkdirAll(filepath.Dir(p), 0o755)
+	_ = os.WriteFile(p, []byte(`{"owner":"o","number":9,"pr_repo":"o/app"}`), 0o644)
+	last, ok := loadLast()
+	if !ok || last.PRRepos["o/9"] != "o/app" || last.PRRepo != "" {
+		t.Fatalf("v0.7's pr_repo should become o/9's repo, got %+v", last)
 	}
 }
 
