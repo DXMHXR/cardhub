@@ -44,6 +44,7 @@ func main() {
 	group := flag.String("group", "", "single-select field to group columns by (default: the view's grouping, else Status)")
 	viewArg := flag.String("view", "", "saved project view to show, by name or number (default: all items)")
 	once := flag.Bool("once", false, "print a one-shot summary and exit (no UI)")
+	gui := flag.Bool("gui", false, "also show CardHub in Herdr's side panel (the cardhub Herdr mod draws it from this process)")
 	flag.Usage = func() { fmt.Fprintf(os.Stderr, usage, versionLabel()); flag.PrintDefaults() }
 	// AI link commands have their own flags
 	if len(os.Args) > 1 {
@@ -127,9 +128,15 @@ func main() {
 	if last, ok := loadLast(); ok { // keep other boards' searches, and bring back this one's
 		m.saved, m.restore = last, last.Searches
 	}
+	if *gui {
+		m.gui = &guiOut{dir: guiDir()}
+	}
 	var p *tea.Program
 	m.hub = NewHub(func(added bool) { p.Send(linkMsg{added}) })
 	p = tea.NewProgram(m, tea.WithAltScreen())
+	if m.gui != nil {
+		go watchGUICommands(p, m.gui.dir)
+	}
 	if owner != "" {
 		m.hub.Show(owner, number) // the AI link: cardhub notify / events
 	}

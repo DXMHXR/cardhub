@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -663,5 +664,68 @@ func TestGridRowsShareTheHeight(t *testing.T) {
 	// too short for anything but headers: headers only
 	if l := rowLayouts(cols, 2, 7); l[0].vis != 0 || l[1].vis != 0 {
 		t.Errorf("want headers only, got %+v", l)
+	}
+}
+
+func TestGUIPublishesTheBoardAndTakesClicks(t *testing.T) {
+	dir := t.TempDir()
+	m := newModel(nil, "o", 1, time.Minute, "", "")
+	m.gui = &guiOut{dir: dir}
+	m.applyBoard(&Board{Title: "Roadmap", Windowed: true, Order: []string{"Todo", "Done"},
+		Totals: map[string]int{"Todo": 50, "Done": 1},
+		Items: []Item{{ID: "a", Title: "Fix login", Repo: "o/app", Number: 3, Values: map[string]string{"Status": "Todo"}},
+			{ID: "b", Title: "Ship it", Repo: "o/app", Number: 4, Values: map[string]string{"Status": "Done"}}}})
+	m.publish()
+	var s guiState
+	b, err := os.ReadFile(filepath.Join(dir, "state.json"))
+	if err != nil || json.Unmarshal(b, &s) != nil {
+		t.Fatalf("no state.json: %v", err)
+	}
+	if s.Project.Title != "Roadmap" || len(s.Board.Columns) != 2 || s.Board.Columns[0].Cards[0].Ref != "o/app#3" || !s.Board.Columns[0].More {
+		t.Fatalf("unexpected state: %+v", s.Board)
+	}
+
+	// "Show more" loads another page of that column
+	if lim := m.cardLimits()["Todo"]; lim != guiCardsPerColumn {
+		t.Fatalf("want %d cards per column at first, got %d", guiCardsPerColumn, lim)
+	}
+	m.runGUI(guiCmd{Cmd: "more", Column: "Todo"})
+	if lim := m.cardLimits()["Todo"]; lim != 2*guiCardsPerColumn {
+		t.Fatalf("want %d after Show more, got %d", 2*guiCardsPerColumn, lim)
+	}
+
+	// a card click opens its detail, Back closes it
+	m.runGUI(guiCmd{Cmd: "card", ID: "b"})
+	if st := m.guiState(); st.Detail == nil || st.Detail.Card.Title != "Ship it" {
+		t.Fatalf("want the detail of Ship it, got %+v", st.Detail)
+	}
+	m.runGUI(guiCmd{Cmd: "close"})
+	if m.guiState().Detail != nil {
+		t.Fatal("Back should close the detail")
+	}
+
+	// the AI link screen, with the sample prompt to copy
+	m.runGUI(guiCmd{Cmd: "screen", Screen: "link"})
+	if st := m.guiState(); st.Screen != "link" || st.LinkPage.Prompt == "" {
+		t.Fatalf("want the AI link screen with its prompt, got %q", st.Screen)
+	}
+
+	// the Issues screen (the panel's own), on the Pull requests screen's repo
+	m.prs.repo = "o/app"
+	if cmd := m.runGUI(guiCmd{Cmd: "screen", Screen: "issues"}); cmd == nil || m.guiState().Screen != "issues" {
+		t.Fatal("want the Issues screen, loading o/app's issues")
+	}
+	if it := issueItem(Issue{ID: "I_1", Number: 7, State: "CLOSED", Reason: "NOT_PLANNED", ClosedAt: time.Now()}, "o/app"); it.Ref() != "o/app#7" || !strings.Contains(it.Values["Closed"], "not planned") {
+		t.Fatalf("unexpected issue item: %+v", it)
+	}
+	m.runGUI(guiCmd{Cmd: "screen", Screen: "board"})
+
+	// publish writes only when something changed
+	m.publish()
+	before, _ := os.Stat(filepath.Join(dir, "state.json"))
+	time.Sleep(10 * time.Millisecond)
+	m.publish()
+	if after, _ := os.Stat(filepath.Join(dir, "state.json")); !after.ModTime().Equal(before.ModTime()) {
+		t.Error("an unchanged state was written again")
 	}
 }

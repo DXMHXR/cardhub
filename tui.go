@@ -168,6 +168,8 @@ type model struct {
 
 	spin spinner.Model
 
+	gui *guiOut // -gui: Herdr's side panel draws this model (gui.go); nil in the terminal
+
 	width, height int
 }
 
@@ -290,6 +292,12 @@ func resolveGroup(fields []SelectField, want string) string {
 // what's on screen plus one more window of read-ahead for scrolling.
 func (m model) cardLimits() map[string]int {
 	lim := map[string]int{}
+	if m.gui != nil { // the panel scrolls a column itself; "Show more" asks for more
+		for _, c := range m.columns {
+			lim[c.name] = min(100, max(guiCardsPerColumn, m.gui.more[c.name]))
+		}
+		return lim
+	}
 	for i, c := range m.columns { // a stretched box shows more than visibleCards
 		lim[c.name] = min(100, m.offsets[c.name]+2*max(visibleCards, m.colCards(i)))
 	}
@@ -436,7 +444,7 @@ func autoInterval(base time.Duration, cost int, rl RateLimit, now time.Time) tim
 	return d.Round(5 * time.Second)
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height

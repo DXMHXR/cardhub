@@ -15,6 +15,7 @@ A live terminal dashboard for **GitHub Projects** boards. CardHub shows your boa
 - **Search with GitHub filters, plus OR.** `/` takes free text or GitHub's filter syntax (`label:bug assignee:@me is:open`) and runs on GitHub, so totals stay exact. It also takes `OR` (or `|`), which GitHub lacks: `assignee:@me OR no:assignee` (up to 3 sides). Each view remembers its own search, also across restarts.
 - **Card details.** `⏎` opens a card in a scrollable popup: its fields, description and latest comments, without leaving the terminal.
 - **Pull requests.** Screen `2` lists a repo's open or closed pull requests, shows one in full and merges it. The repo menu recommends the repos of the project on your board. See [Pull requests](#pull-requests).
+- **A native panel in Herdr.** In [Herdr](https://herdr.dev)'s side panel CardHub is a GUI: columns of cards, card and pull request details, merging, and the project, view and repo menus, all clickable. Everywhere else it stays the terminal app. See [In Herdr's side panel](#in-herdrs-side-panel).
 - **Stats.** How many cards moved between columns this session, per project and route (`In Progress → Done`), plus the latest moves.
 - **AI link.** Agents (Claude Code or any agent that runs commands) ask CardHub to report card changes, then wait without polling. One CardHub serves several agents on several projects.
 - **Gentle on the API.** Loads only the cards on screen (about 1 point per refresh), adapts its refresh rate to your hourly budget, and shows that budget live.
@@ -144,6 +145,19 @@ Screen `2` (or `Tab` from the board) shows one repo's pull requests, most recent
 | `P` · `R` | switch repo · refresh |
 
 ![A pull request's details: branch, size, review, description and comments](docs/pr-details.png)
+
+## In Herdr's side panel
+
+In the [Herdr](https://herdr.dev) app, CardHub's side panel is a native GUI rather than a terminal: the board laid out as in the terminal (a grid of column boxes that wraps to the panel's width, with the moving connectors) with cards you click, the card and pull request details with their markdown rendered, merging with a method picker and a confirm step, an Issues screen (the open or closed issues of the Pull requests screen's repo, each opening with its description and comments), the AI link screen (watchers, rules, activity, the sample prompt to copy, and stopping a watcher), menus for the project, the view and the repo, and the terminal's footer: Sync (with the refresh interval's − / + and Pause, and a red alert once the API budget is nearly used up) and AI link. The search box takes the same filters as `/`.
+
+It is the same CardHub underneath: `cardhub -gui` runs in a terminal Herdr keeps hidden and does the syncing, the AI link and the merging. It writes what the panel shows to `gui/state.json` in CardHub's config folder (`~/Library/Application Support/cardhub` on macOS) and takes the panel's clicks from `gui/commands/`. Run anywhere else, CardHub is the terminal app as before; the panel has no switch back to it.
+
+To set it up:
+
+1. Install the panel (the `cardhub` Herdr mod): `herdr/install.sh`. Run it again after updating CardHub.
+2. Show the mod in a panel of your layout: a block with `"content": { "mod": "cardhub" }`. It starts `cardhub -gui` in a hidden terminal named `cardhub` (replacing a plain `cardhub` running there), and starts it again if it quits.
+
+The panel opens on the board you watched last.
 
 ## AI link: let AI agents react to card changes
 

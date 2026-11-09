@@ -39,6 +39,10 @@ const detailComments = 20
 const detailQuery = `
 query($id: ID!) {
   node(id: $id) {
+    ... on Issue {
+      body createdAt author { login }
+      comments(last: 20) { totalCount nodes { body createdAt author { login } } }
+    }
     ... on PullRequest {
       body createdAt author { login }
       comments(last: 20) { totalCount nodes { body createdAt author { login } } }
@@ -331,17 +335,22 @@ var (
 // templates are full of them), no \r, at most one blank line in a row, and
 // headings in bold without their #s.
 func cleanMarkdown(s string) string {
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	s = htmlComment.ReplaceAllString(s, "")
-	s = strings.ReplaceAll(s, "\t", "    ")
-	s = blankRuns.ReplaceAllString(s, "\n\n")
-	lines := strings.Split(s, "\n")
+	lines := strings.Split(plainMarkdown(s), "\n")
 	for i, l := range lines { // "## Heading" → bold Heading
 		if t := strings.TrimLeft(l, "#"); t != l && len(l)-len(t) <= 6 && strings.HasPrefix(t, " ") {
 			lines[i] = bold.Render(strings.TrimSpace(t))
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// plainMarkdown is the body without what never shows (HTML comments, \r) and
+// with blank runs collapsed: still markdown, for a view that renders it.
+func plainMarkdown(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = htmlComment.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "\t", "    ")
+	return blankRuns.ReplaceAllString(s, "\n\n")
 }
 
 // detailBox renders the popup.

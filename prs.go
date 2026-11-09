@@ -155,6 +155,14 @@ func (m *model) openRepoPicker() tea.Cmd {
 	m.picker.open, m.picker.kind, m.picker.query, m.picker.split = true, pickRepo, "", false
 	m.picker.err = nil
 	m.focusCurrent()
+	cmd := m.loadRepoLists()
+	m.picker.loading = m.prs.reposLoading
+	return cmd
+}
+
+// loadRepoLists fetches what the repo menu lists: the project's repos once per
+// project and the viewer's repos once.
+func (m *model) loadRepoLists() tea.Cmd {
 	var cmds []tea.Cmd
 	if key := m.projectKey(); key != "" {
 		if _, ok := m.prs.projRepos[key]; !ok {
@@ -175,7 +183,6 @@ func (m *model) openRepoPicker() tea.Cmd {
 		m.prs.reposLoading = true
 		cmds = append(cmds, listRepos(m.client))
 	}
-	m.picker.loading = m.prs.reposLoading
 	return tea.Batch(cmds...)
 }
 
