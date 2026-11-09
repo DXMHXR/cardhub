@@ -605,3 +605,35 @@ func TestTypedRepoComesFirst(t *testing.T) {
 		t.Fatalf("want unlisted o/new offered first, got %+v", rows)
 	}
 }
+
+func TestGridRowsShareTheHeight(t *testing.T) {
+	// two empty columns on the first grid row, two cards on the second
+	cols := []column{{name: "Backlog"}, {name: "In Progress"}, {name: "Done", total: 2}}
+	for _, h := range []int{17, 30, 40} {
+		lays := rowLayouts(cols, 2, h)
+		if lays[0].innerH() != lays[1].innerH() {
+			t.Errorf("h=%d: rows differ in height: %+v", h, lays)
+		}
+		if g := gridH(lays); g > h || g < h-1 { // an odd line may be left over
+			t.Errorf("h=%d: grid is %d lines tall, want it to fill the board", h, g)
+		}
+		if lays[1].vis < 2 {
+			t.Errorf("h=%d: Done's 2 cards don't fit: %+v", h, lays[1])
+		}
+	}
+	// short: Done's cards one line each; tall: in full
+	if l := rowLayouts(cols, 2, 17); !l[1].compact {
+		t.Errorf("17 lines: want one line per card, got %+v", l[1])
+	}
+	if l := rowLayouts(cols, 2, 30); l[1].compact || l[0].compact {
+		t.Errorf("30 lines: want full cards and an empty box with its title rule, got %+v", l)
+	}
+	// a single card gets a full box
+	if l := rowLayouts([]column{{name: "A", total: 1}}, 1, 8); l[0] != (boxLayout{vis: 1}) {
+		t.Errorf("want 1 full card, got %+v", l[0])
+	}
+	// too short for anything but headers: headers only
+	if l := rowLayouts(cols, 2, 7); l[0].vis != 0 || l[1].vis != 0 {
+		t.Errorf("want headers only, got %+v", l)
+	}
+}

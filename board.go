@@ -12,12 +12,13 @@ import (
 // Board layout: columns sit side by side while they fit and wrap into further
 // grid rows when they don't, in workflow order (left→right, then next row).
 // Animated dotted connectors between boxes show the direction work flows.
-// On a short screen the boxes shrink (fewer cards each, then one line per
-// card, then no cards at all) so the whole flow stays in view before grid
-// rows start to scroll.
+// Every grid row gets the same height, together filling the screen; each box
+// shows as many cards as fit in it (full while two fit, then one line per
+// card, then none) so the whole flow stays in view before grid rows start
+// to scroll.
 
 const (
-	visibleCards = 3  // most cards shown per column; the rest scroll
+	visibleCards = 3  // cards a box tries to show in full before going one line per card; also the minimum loaded
 	minBoxW      = 30 // narrowest a column box may get before wrapping
 	gapW         = 5  // horizontal connector between boxes
 	cardLines    = 3
@@ -25,15 +26,13 @@ const (
 )
 
 // boxLayout is how much of each column a box shows: vis cards, each in full
-// (title, repo, labels) or compact (just the title line).
+// (title, repo, labels) or compact (just the title line), plus fill blank
+// lines when a stretched box is taller than its cards.
 type boxLayout struct {
 	vis     int
 	compact bool
+	fill    int
 }
-
-// layouts from roomiest to smallest. One full card is left out: three
-// compact ones take the same height.
-var layouts = []boxLayout{{3, false}, {2, false}, {3, true}, {2, true}, {1, true}, {0, true}}
 
 // innerH is a box's inner height. Full: header + rule + cards (with a blank
 // line between) + scroll line. Compact: header (whose count shows the scroll
@@ -41,30 +40,75 @@ var layouts = []boxLayout{{3, false}, {2, false}, {3, true}, {2, true}, {1, true
 func (l boxLayout) innerH() int {
 	switch {
 	case l.vis == 0:
-		return 1
+		return 1 + l.fill
 	case l.compact:
-		return 1 + l.vis
+		return 1 + l.vis + l.fill
 	}
-	return 2 + l.vis*cardLines + (l.vis - 1) + 1
+	return 2 + l.vis*cardLines + (l.vis - 1) + 1 + l.fill
 }
 
-// layoutFit is the roomiest layout that fits all rows of a grid in h lines,
-// or headers only when none does.
-func layoutFit(h, rows int) boxLayout {
-	for _, l := range layouts {
-		if rows*(l.innerH()+2)+(rows-1) <= h {
-			return l
+// sized is the layout for a box inner lines tall whose column (the fullest
+// of its grid row) has need cards, at most visibleCards: full cards when at
+// least two (or its only one) fit, else one line per card; "No Task" for a
+// row of empty columns. Leftover lines stay blank.
+func sized(inner, need int) boxLayout {
+	if need == 0 { // "No Task" fills it; with room, under a title rule like a full box
+		if full := (boxLayout{vis: 1}); inner >= full.innerH() {
+			return boxLayout{vis: 1, fill: inner - full.innerH()}
 		}
+		return boxLayout{vis: max(0, inner-1), compact: true}
 	}
-	return layouts[len(layouts)-1]
+	if vis := (inner - 2) / (cardLines + 1); vis >= max(1, min(need, 2)) { // a card and the blank line after it; the scroll line takes the last one's
+		l := boxLayout{vis: vis}
+		l.fill = inner - l.innerH()
+		return l
+	}
+	return boxLayout{vis: max(0, inner-1), compact: true}
 }
 
-// shownCards is how many cards per column the board on screen shows.
+// gridH is how tall grid rows with these layouts are, with the wrap
+// connector between rows.
+func gridH(lays []boxLayout) int {
+	h := max(0, len(lays)-1)
+	for _, l := range lays {
+		h += l.innerH() + 2
+	}
+	return h
+}
+
+// rowLayouts lays out a grid's rows in a board h lines tall. Every row
+// gets the same height, filling the board, and each box shows as many cards
+// as fit in it. When even the column headers don't fit, it's headers only
+// and the rows scroll.
+func rowLayouts(cols []column, fit, h int) []boxLayout {
+	rows := (len(cols) + fit - 1) / max(1, fit)
+	need := make([]int, rows)
+	for i, c := range cols {
+		need[i/fit] = max(need[i/fit], min(c.total, visibleCards))
+	}
+	inner := max(1, (h+1)/max(1, rows)-3) // each row: its box (inner + 2 borders) and the connector under it
+	lays := make([]boxLayout, rows)
+	for r := range lays {
+		lays[r] = sized(inner, need[r])
+	}
+	return lays
+}
+
+// shownCards is how many cards the selected column's box shows.
 func (m model) shownCards() int {
+	return m.colCards(m.col)
+}
+
+// colCards is how many cards column i's box has room for.
+func (m model) colCards(i int) int {
 	n := len(m.columns)
+	if n == 0 {
+		return 0
+	}
 	w, h := m.boardSize()
 	fit := gridFit(w, n)
-	return layoutFit(h, (n+fit-1)/max(1, fit)).vis
+	lays := rowLayouts(m.columns, fit, h)
+	return lays[clamp(i, 0, n-1)/fit].vis
 }
 
 type animMsg struct{}
@@ -90,17 +134,23 @@ func (m model) boardView(w, h int) string {
 	fit := gridFit(w, n)
 	boxW := (w - (fit-1)*gapW) / fit
 	rows := (n + fit - 1) / fit
-	lay := layoutFit(h, rows)
-	boxH := lay.innerH() + 2
+	lays := rowLayouts(m.columns, fit, h)
 
-	// how many grid rows fit; keep the selected column's row on screen
-	rowH := boxH + 1 // +1 for the wrap connector under each row
-	shown := clamp((h+1)/rowH, 1, rows)
-	selRow := m.col / fit
-	first := clamp(selRow-shown+1, 0, rows-shown)
+	// which grid rows fit, keeping the selected column's row on screen
+	selRow := min(m.col/fit, rows-1)
+	first := 0
+	for first < selRow && gridH(lays[first:selRow+1]) > h {
+		first++
+	}
+	shown := 1
+	for first+shown < rows && gridH(lays[first:first+shown+1]) <= h {
+		shown++
+	}
 
 	var out []string
 	for r := first; r < first+shown; r++ {
+		lay := lays[r]
+		boxH := lay.innerH() + 2
 		var parts []string
 		for c := 0; c < fit; c++ {
 			i := r*fit + c
@@ -119,7 +169,7 @@ func (m model) boardView(w, h int) string {
 	}
 	if hidden := rows - shown; hidden > 0 {
 		hint := "↑↓ past a column's end moves between rows"
-		if lay.vis == 0 {
+		if lays[selRow].vis == 0 {
 			hint = "↑↓ moves between rows"
 		}
 		out = append(out, dim.Render(fmt.Sprintf(" grid rows %d–%d of %d · %s", first+1, first+shown, rows, hint)))

@@ -290,8 +290,8 @@ func resolveGroup(fields []SelectField, want string) string {
 // what's on screen plus one more window of read-ahead for scrolling.
 func (m model) cardLimits() map[string]int {
 	lim := map[string]int{}
-	for _, c := range m.columns {
-		lim[c.name] = min(100, m.offsets[c.name]+2*visibleCards)
+	for i, c := range m.columns { // a stretched box shows more than visibleCards
+		lim[c.name] = min(100, m.offsets[c.name]+2*max(visibleCards, m.colCards(i)))
 	}
 	return lim
 }
