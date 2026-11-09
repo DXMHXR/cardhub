@@ -554,3 +554,54 @@ func TestOrBranches(t *testing.T) {
 		t.Error("columnShown should show the columns any branch shows, and only those")
 	}
 }
+
+func TestPRRepoSurvivesBoardSaves(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	m := newModel(nil, "o", 1, time.Minute, "", "")
+	m.rememberBoard()
+	m.switchRepo("o/app")
+
+	m.number = 2 // another board saved afterwards keeps the repo
+	m.rememberBoard()
+	last, _ := loadLast()
+	if last.PRRepo != "o/app" || last.Number != 2 {
+		t.Fatalf("want board o/2 and repo o/app saved, got %+v", last)
+	}
+
+	// next run: the Pull requests screen opens on it without asking
+	m2 := newModel(nil, "o", 2, time.Minute, "", "")
+	m2.saved = last
+	m2.enterPRs()
+	if m2.prs.repo != "o/app" || m2.picker.open {
+		t.Fatalf("want repo o/app and no picker, got repo %q, picker %v", m2.prs.repo, m2.picker.open)
+	}
+}
+
+func TestRepoMenuRecommendsProjectRepos(t *testing.T) {
+	m := newModel(nil, "o", 1, time.Minute, "", "")
+	m.board = &Board{Items: []Item{{Repo: "o/web"}, {Repo: "o/app"}, {Repo: "o/app"}}}
+	m.prs.projRepos = map[string][]string{"o/1": {"o/api", "o/app"}}
+	m.prs.repos = []string{"me/dotfiles", "o/web"}
+	var got []string
+	for _, r := range m.repoRows() {
+		got = append(got, r.meta+" "+r.repo)
+	}
+	want := []string{"★ project o/app", "★ project o/web", "★ project o/api", " me/dotfiles"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("repo menu:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestTypedRepoComesFirst(t *testing.T) {
+	m := newModel(nil, "o", 1, time.Minute, "", "")
+	m.prs.repos = []string{"xo/app", "o/app"}
+	m.picker.kind, m.picker.query = pickRepo, "o/app"
+	if rows := m.pickMatches(); len(rows) == 0 || rows[0].repo != "o/app" {
+		t.Fatalf("want o/app first, got %+v", rows)
+	}
+	m.picker.query = "o/new"
+	if rows := m.pickMatches(); len(rows) == 0 || rows[0].repo != "o/new" {
+		t.Fatalf("want unlisted o/new offered first, got %+v", rows)
+	}
+}

@@ -20,6 +20,7 @@ const (
 	pickProject pickKind = iota
 	pickView
 	pickWatcher // stop one of the AI watchers
+	pickRepo    // the Pull requests screen's repo
 )
 
 type projectsMsg struct {
@@ -45,6 +46,7 @@ type pickRow struct {
 	proj        ProjectRef // pickProject
 	view        int        // pickView: index into m.views, -1 = all items
 	board       string     // pickWatcher: owner/number
+	repo        string     // pickRepo: owner/name
 }
 
 func (m model) pickRows() []pickRow {
@@ -72,6 +74,8 @@ func (m model) pickRows() []pickRow {
 			rows = append(rows, pickRow{meta: s.Board, title: firstNonEmpty(s.Title, s.Board) + "  ·  " + detail,
 				current: s.Waiting, board: s.Board})
 		}
+	case pickRepo:
+		rows = m.repoRows()
 	case pickView:
 		rows = append(rows, pickRow{meta: "", title: "All items", current: m.viewIdx < 0, view: -1})
 		for i, v := range m.views {
@@ -184,6 +188,8 @@ func (m model) pickerKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case pickWatcher:
 				m.confirm, m.stopTarget = confirmStopWatcher, row.board
 				return m, nil
+			case pickRepo:
+				return m, m.switchRepo(row.repo)
 			}
 			return m, m.switchView(row.view)
 		}
@@ -256,10 +262,12 @@ func (m model) pickerBox(maxW, maxH int) string {
 		title, what = "Switch view", "views"
 	case pickWatcher:
 		title, what = "Stop an AI watcher", "watchers"
+	case pickRepo:
+		title, what = "Pick a repo for pull requests", "repos"
 	}
 
 	var b strings.Builder
-	if m.split && !m.picker.split && m.picker.kind != pickWatcher { // name the board it switches
+	if m.split && !m.picker.split && m.picker.kind != pickWatcher && m.picker.kind != pickRepo { // name the board it switches
 		title = bold.Render(title) + dim.Render(" · "+trunc(m.paneName(), inner-lipgloss.Width(title)-3))
 	} else {
 		title = bold.Render(title)
@@ -270,7 +278,7 @@ func (m model) pickerBox(maxW, maxH int) string {
 
 	list := m.pickMatches()
 	switch {
-	case m.picker.loading:
+	case m.picker.loading && len(list) == 0:
 		b.WriteString(m.spin.View() + dim.Render(" loading your "+what+"…"))
 	case m.picker.err != nil:
 		b.WriteString(errStyle.Render(trunc(m.picker.err.Error(), inner)))
@@ -319,6 +327,9 @@ func (m model) pickerHelp() string {
 	}
 	if m.picker.kind == pickWatcher {
 		return "type to search · ↑↓ choose · enter stop · esc close"
+	}
+	if m.picker.kind == pickRepo {
+		return "★ = repos of this board's project · type owner/name for any repo · enter open · esc close"
 	}
 	return "type to search · ↑↓ choose · enter open · esc close"
 }

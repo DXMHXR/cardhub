@@ -21,6 +21,7 @@ type view int
 
 const (
 	viewBoard view = iota
+	viewPRs        // pull requests of a repo
 	viewStats
 	viewLink // the AI link screen
 	numViews
@@ -155,6 +156,8 @@ type model struct {
 	confirm      confirmKind // an open "Pause syncing?" / "Quit CardHub?" / "Stop watching?" dialog
 	stopTarget   string      // the watcher (owner/number) the stop dialog is about
 	picker       picker
+	detail       detail   // the card detail popup (Enter)
+	prs          prScreen // the Pull requests screen
 	moveLog      *moveLog // the Stats screen: cards moved this session, every board
 
 	latest    string    // newest CardHub release on GitHub, once checked
@@ -341,7 +344,7 @@ func (m *model) rememberBoard() {
 	if m.bg { // the focused board is the one to reopen
 		return
 	}
-	s := lastState{Owner: m.owner, Number: m.number}
+	s := lastState{Owner: m.owner, Number: m.number, PRRepo: m.saved.PRRepo}
 	if v := m.currentView(); v != nil {
 		s.View = v.Name
 	}
@@ -468,7 +471,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.fetchCmd()
 
 	case tickMsg:
-		cmds := []tea.Cmd{m.dueFetch(), m.onOther(m.dueFetch)}
+		cmds := []tea.Cmd{m.dueFetch(), m.onOther(m.dueFetch), m.duePRs()}
 		if time.Now().After(m.nextRules) { // AI watchers have their own timer, unaffected by pause
 			cmds = append(cmds, m.checkRules())
 		}
@@ -541,6 +544,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.gotProjects(msg)
 		return m, nil
 
+	case detailMsg:
+		m.gotDetail(msg)
+		return m, nil
+
+	case prsMsg:
+		m.gotPRs(msg)
+		return m, nil
+
+	case reposMsg:
+		m.gotRepos(msg)
+		return m, nil
+
+	case projReposMsg:
+		m.gotProjRepos(msg)
+		return m, nil
+
+	case mergedMsg:
+		return m, m.gotMerged(msg)
+
 	case tea.KeyMsg:
 		if m.confirm != confirmNone {
 			return m.confirmKey(msg)
@@ -548,9 +570,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.picker.open {
 			return m.pickerKey(msg)
 		}
+		if m.prs.merge.open {
+			return m.mergeKey(msg)
+		}
+		if m.detail.open {
+			return m.detailKey(msg)
+		}
 		return m.handleKey(msg)
 	}
 	return m, nil
+}
+
+// showView switches screens; the Pull requests screen loads (or asks for a
+// repo) as it comes up.
+func (m *model) showView(v view) tea.Cmd {
+	m.view = v
+	if v == viewPRs {
+		return m.enterPRs()
+	}
+	return nil
 }
 
 // dueFetch syncs the board when its interval is up.
@@ -752,6 +790,11 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	}
+	if m.view == viewPRs {
+		if cmd, ok := m.prKey(k.String()); ok {
+			return m, cmd
+		}
+	}
 	switch k.String() {
 	case "ctrl+c": // deliberate: quits straight away
 		return m, tea.Quit
@@ -765,20 +808,11 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "tab", "shift+tab":
 		if k.String() == "tab" {
-			m.view = (m.view + 1) % numViews
-		} else {
-			m.view = (m.view + numViews - 1) % numViews
+			return m, m.showView((m.view + 1) % numViews)
 		}
-		return m, nil
-	case "1":
-		m.view = viewBoard
-		return m, nil
-	case "2":
-		m.view = viewStats
-		return m, nil
-	case "3":
-		m.view = viewLink
-		return m, nil
+		return m, m.showView((m.view + numViews - 1) % numViews)
+	case "1", "2", "3", "4":
+		return m, m.showView(view(k.String()[0] - '1'))
 	case "left", "h":
 		m.moveCol(m.col - 1)
 	case "right", "l":
@@ -871,7 +905,11 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.interval -= 5 * time.Second
 			m.nextFetch = m.nextFetch.Add(-5 * time.Second)
 		}
-	case "enter", "o":
+	case "enter":
+		if m.view == viewBoard {
+			return m, m.openDetail()
+		}
+	case "o":
 		if it, ok := m.selected(); ok && it.URL != "" {
 			openURL(it.URL)
 		}
@@ -974,6 +1012,8 @@ func (m model) View() string {
 	bodyH := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
 	var body string
 	switch {
+	case m.view == viewPRs: // works without a board
+		body = m.prsView(m.width, bodyH)
 	case m.view == viewBoard && m.split: // each board says if it's loading or failed
 		body = m.splitView()
 	case m.board == nil && m.lastErr != nil:
@@ -1000,6 +1040,12 @@ func (m model) View() string {
 			return overlayIn(screen, m.pickerBox(r.w, min(m.height-4, max(r.h, 14))), m.width, m.height, r)
 		}
 		return overlay(screen, m.pickerBox(m.width, m.height-4), m.width, m.height)
+	}
+	if m.detail.open {
+		screen = overlay(screen, m.detailBox(), m.width, m.height)
+	}
+	if m.prs.merge.open {
+		screen = overlay(screen, m.mergeBox(), m.width, m.height)
 	}
 	return screen
 }
@@ -1060,7 +1106,7 @@ func (m model) headerView() string {
 		name, strings.Repeat(" ", max(1, m.width-lipgloss.Width(name)-lipgloss.Width(live))), live)
 
 	// line 2: screen tabs, grouping and item count on the right
-	tabs := []string{"1 Board", "2 Stats", "3 AI link"}
+	tabs := []string{"1 Board", "2 Pull requests", "3 Stats", "4 AI link"}
 	for i := range tabs {
 		if view(i) == m.view && !m.picker.open {
 			tabs[i] = tabOn.Render(tabs[i])
@@ -1078,7 +1124,7 @@ func (m model) headerView() string {
 	}
 	line += "\n" + menu + strings.Repeat(" ", max(1, m.width-lipgloss.Width(menu)-lipgloss.Width(info))) + info
 
-	if box := m.filterBox(); box != "" {
+	if box := m.filterBox(); box != "" && m.view != viewPRs { // the board's search
 		line += "\n\n" + box // blank line between the menu and the filter box
 	}
 	return line + "\n"
@@ -1308,15 +1354,20 @@ func (m model) footerView() string {
 	}
 
 	// Tab cycles the screens; name the one it goes to
-	other := map[view]string{viewBoard: "Stats", viewStats: "AI link", viewLink: "Board"}[m.view]
+	other := map[view]string{viewBoard: "Pull requests", viewPRs: "Stats", viewStats: "AI link", viewLink: "Board"}[m.view]
 	keys := []string{
-		pair("←↓↑→", "Move"), pair("⏎", "Open"), pair("P", "Project"), pair("V", "View"),
+		pair("←↓↑→", "Move"), pair("⏎", "Details"), pair("o", "Open"), pair("P", "Project"), pair("V", "View"),
 		pair("\\", pick(m.split, "Close split", "Split")),
 		pair("/", "Filter"), pair("R", "Sync"), pair("Space", pick(m.paused, "Resume", "Pause")),
 		pair("+/-", "Interval"), pair("Tab", other), pair("Q", "Quit"),
 	}
-	if m.split {
-		keys = append(keys[:5], append([]string{pair("W", "Next board"), pair("B", "Swap boards")}, keys[5:]...)...)
+	if m.view == viewPRs {
+		keys = []string{
+			pair("↑↓", "Move"), pair("←→", "Open/Closed"), pair("⏎", "Details"), pair("o", "Open"),
+			pair("M", "Merge"), pair("P", "Repo"), pair("R", "Refresh"), pair("Tab", other), pair("Q", "Quit"),
+		}
+	} else if m.split {
+		keys = append(keys[:6], append([]string{pair("W", "Next board"), pair("B", "Swap boards")}, keys[6:]...)...)
 	}
 	if m.view == viewLink && m.hub.Status().Boards > 0 {
 		keys = append(keys[:len(keys)-1], pair("X", "Stop watcher"), pair("C", "Copy prompt"), keys[len(keys)-1])

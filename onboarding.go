@@ -20,6 +20,7 @@ type lastState struct {
 	Number   int               `json:"number"`
 	View     string            `json:"view,omitempty"`
 	Searches map[string]string `json:"searches,omitempty"` // "/" search per board (searchKey), restored when it reopens
+	PRRepo   string            `json:"pr_repo,omitempty"`  // the Pull requests screen's repo
 }
 
 // searchKey names a board (project and view) in lastState.Searches.

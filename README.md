@@ -1,6 +1,6 @@
 # CardHub
 
-A live terminal dashboard for **GitHub Projects** boards. CardHub shows your board as kanban columns (or a table, for table views), keeps it in sync with GitHub, shows cards moving through your workflow, and can tell AI agents when cards change.
+A live terminal dashboard for **GitHub Projects** boards. CardHub shows your board as kanban columns (or a table, for table views), keeps it in sync with GitHub, shows cards moving through your workflow, lists and merges the pull requests of the repos you work on, and can tell AI agents when cards change.
 
 ![CardHub showing the GitHub Public Roadmap board](docs/board.png)
 
@@ -13,6 +13,8 @@ A live terminal dashboard for **GitHub Projects** boards. CardHub shows your boa
 - **Projects and saved views.** `P` and `V` open searchable menus. A view hides the columns its filter leaves out, like on GitHub. CardHub reopens the last board and view you watched.
 - **Two boards at once.** `\` opens a second board: another project, or the same one in another view, side by side or stacked.
 - **Search with GitHub filters, plus OR.** `/` takes free text or GitHub's filter syntax (`label:bug assignee:@me is:open`) and runs on GitHub, so totals stay exact. It also takes `OR` (or `|`), which GitHub lacks: `assignee:@me OR no:assignee` (up to 3 sides). Each view remembers its own search, also across restarts.
+- **Card details.** `⏎` opens a card in a scrollable popup: its fields, description and latest comments, without leaving the terminal.
+- **Pull requests.** Screen `2` lists a repo's open or closed pull requests, shows one in full and merges it. The repo menu recommends the repos of the project on your board. See [Pull requests](#pull-requests).
 - **Stats.** How many cards moved between columns this session, per project and route (`In Progress → Done`), plus the latest moves.
 - **AI link.** Agents (Claude Code or any agent that runs commands) ask CardHub to report card changes, then wait without polling. One CardHub serves several agents on several projects.
 - **Gentle on the API.** Loads only the cards on screen (about 1 point per refresh), adapts its refresh rate to your hourly budget, and shows that budget live.
@@ -68,10 +70,10 @@ CardHub takes its token from `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth toke
 | Scope | Needed for |
 |---|---|
 | `read:project` | reading boards (required) |
-| `repo` | card titles in private repositories (else "(no access)") |
+| `repo` | card titles in private repositories (else "(no access)"), pull requests of private repos, merging |
 | `read:org` | your organizations' projects in the `P` menu |
 
-A fine-grained token needs Organization → *Projects: Read* and Repository → *Issues*, *Pull requests*, *Metadata: Read*. `cardhub doctor` checks all of this and prints the command that fixes anything missing.
+A fine-grained token needs Organization → *Projects: Read* and Repository → *Issues*, *Pull requests*, *Metadata: Read* (to merge: *Pull requests* and *Contents: Read and write*). `cardhub doctor` checks all of this and prints the command that fixes anything missing.
 
 ## Usage
 
@@ -89,16 +91,59 @@ cardhub doctor | version | update                    # check setup · version ·
 | Key | Action |
 |---|---|
 | `←↓↑→` / `hjkl` | move between columns and cards, or table rows |
-| `⏎` / `o` | open the selected card on GitHub (`O` opens the board) |
+| `⏎` | card details (see below) |
+| `o` | open the selected card on GitHub (`O` opens the board) |
 | `P` / `V` | switch project / saved view |
 | `/` | search (`esc` clears) |
 | `\` · `W` · `B` | split screen · move to the other board · swap their places |
 | `R` · `Space` · `+`/`-` | refresh now · pause or resume · refresh faster/slower |
-| `Tab` / `1` `2` `3` | Board, Stats and AI link screens |
+| `Tab` / `1` `2` `3` `4` | Board, Pull requests, Stats and AI link screens |
 | `X` / `C` | AI link screen: stop a watcher / copy the sample prompt |
 | `U` · `Q` | install the new release · quit (`Ctrl+C` quits at once) |
 
 ![Saved view menu over the board](docs/views.png)
+
+### Card details
+
+`⏎` on a card (on a board or in a table) opens it in a popup over the board:
+
+- **Fields:** assignees, labels, every project field (Status, iteration…), milestone, parent issue, sub-issue progress and when it was last updated.
+- **Description:** loaded from GitHub when the popup opens, with issue-template comments left out and headings in bold.
+- **Comments:** the latest 20, each with author and date ("latest 20 of 31" when there are more).
+
+| Key | Action |
+|---|---|
+| `↑↓` / `jk` | scroll a line |
+| `PgUp`/`PgDn` · `Space`/`b` | scroll a page |
+| `g` / `G` | top / bottom |
+| `o` | open the card on GitHub |
+| `Esc` · `q` · `⏎` | close |
+
+Images in a description show as their markdown or HTML for now; `o` opens the card to see them.
+
+![Card details popup with fields, description and comments](docs/card-details.png)
+
+## Pull requests
+
+Screen `2` (or `Tab` from the board) shows one repo's pull requests, most recently updated first.
+
+![Pull requests screen listing a repo's open pull requests](docs/pull-requests.png)
+
+- **Pick a repo with `P`.** The menu starts with the repos of the project on your board, marked ★: first those of the cards on screen, then the rest of the project's (from its cards and the repos linked to it). After them come your 100 most recently pushed repos. Type to narrow the list, or type `owner/name` in full to open any repo. The first visit asks for a repo; CardHub remembers the last one across restarts.
+- **Open or closed with `←→`** (or `S`). Each tab shows its total; closed includes merged. The screen loads the latest 30 and refreshes on the board's cadence; `R` refreshes now and `O` opens the repo's pull requests on GitHub.
+- **Each row** shows its state (● open, ◌ draft, ◆ merged, ✕ closed), number, title and author, then the review decision, comment count, lines added and removed, CI status (✓ ✗ ◷) and age.
+- **`⏎` shows a pull request** in the same popup as a card: author, `head → base` branch, size (`+120 −30 in 4 files`), review decision and each reviewer's latest review, whether it merges cleanly, CI, then the description and latest comments. Code changes stay on GitHub (`o`).
+- **`M` merges it**, from the list or the popup. Choose *Create a merge commit*, *Squash and merge* or *Rebase and merge* (only those the repo allows) and press `⏎`. The dialog warns about conflicts, missing or blocking reviews and failing checks first, and refuses drafts, closed pull requests and repos you can't write to. Branch protection still applies: if GitHub refuses, the dialog shows why.
+
+| Key | Action |
+|---|---|
+| `↑↓` / `jk` · `g`/`G` · `PgUp`/`PgDn` | move |
+| `←→` / `S` | open / closed |
+| `⏎` · `o` · `O` | details · open on GitHub · the repo's pull requests on GitHub |
+| `M` | merge |
+| `P` · `R` | switch repo · refresh |
+
+![A pull request's details: branch, size, review, description and comments](docs/pr-details.png)
 
 ## AI link: let AI agents react to card changes
 
@@ -128,7 +173,7 @@ Without the skill, add ``Before using CardHub, run `cardhub guide`.`` to the age
 
 ## API cost
 
-GitHub doesn't push board updates, so CardHub polls GraphQL; a token gets 5,000 points an hour, shared with other tools. One request covers every column with its visible cards and exact total (about 1 point; a search with `OR` costs 3–4). Scrolling loads more, up to 100 cards per column. CardHub uses at most ~15% of the hourly budget and half of what's left before the reset, slowing down as needed (`Every: 1m0s (auto)`). AI link rules cost about 1 point per watched project per check. CardHub only reads; it never changes cards.
+GitHub doesn't push board updates, so CardHub polls GraphQL; a token gets 5,000 points an hour, shared with other tools. One request covers every column with its visible cards and exact total (about 1 point; a search with `OR` costs 3–4). Scrolling loads more, up to 100 cards per column. CardHub uses at most ~15% of the hourly budget and half of what's left before the reset, slowing down as needed (`Every: 1m0s (auto)`). AI link rules cost about 1 point per watched project per check. The Pull requests screen costs about 1 point per refresh while it's on screen, and card details 1 point each time the popup opens. CardHub never changes cards; the only thing it writes is a merge you confirm.
 
 ## Troubleshooting
 
@@ -140,6 +185,8 @@ GitHub doesn't push board updates, so CardHub polls GraphQL; a token gets 5,000 
 | `project … not found` | check the owner and number in the URL, and that you can open it on GitHub |
 | cards show `(no access)` | `gh auth refresh --scopes repo` |
 | an org's projects are missing under `P` | add `read:org`, or open the board by URL |
+| PR list says `HTTP 502` | GitHub timed out on a busy repo; `R` tries again |
+| merge fails with a branch-protection message | the repo needs approvals or passing checks first; merge on GitHub if you may bypass them |
 | `CardHub isn't open` (exit 4) | open the board, or let `cardhub notify add` open it |
 
 ## License
