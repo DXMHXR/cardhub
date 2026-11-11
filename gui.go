@@ -66,7 +66,8 @@ type guiState struct {
 	Projects *guiProjects `json:"projects"`
 	Suggest  *guiSuggest  `json:"suggest"` // what the search box completes
 	Repos    *guiRepos    `json:"repos"`
-	Update   string       `json:"update,omitempty"` // a newer release, when there is one
+	Update   string       `json:"update,omitempty"`   // a newer release, when there is one
+	Updating *guiUpdate   `json:"updating,omitempty"` // installing it from the panel, as U does
 }
 
 type guiProject struct {
@@ -373,6 +374,7 @@ func (m model) guiState() guiState {
 	}
 	if m.updateAvailable() {
 		s.Update = m.latest
+		s.Updating = &guiUpdate{Can: m.canUpdate(), Busy: m.updating, Done: m.updated, Error: errText(m.updateErr)}
 	}
 	if m.owner != "" {
 		s.Project = &guiProject{Owner: m.owner, Number: m.number,
@@ -519,6 +521,15 @@ func (m model) guiLinkPage() guiLinkPage {
 		pg.Activity = pg.Activity[:guiActivityMax]
 	}
 	return pg
+}
+
+// guiUpdate is the panel's Update button: whether this build can install the
+// release itself (a release build, not one from source), and how it went.
+type guiUpdate struct {
+	Can   bool   `json:"can"`
+	Busy  bool   `json:"busy"`
+	Done  string `json:"done,omitempty"` // the release installed: restart to use it
+	Error string `json:"error,omitempty"`
 }
 
 // guiSuggest is what the panel's search box completes, as GitHub's filter bar
@@ -673,6 +684,15 @@ func watchGUICommands(p *tea.Program, dir string) {
 // runGUI does one of the panel's clicks.
 func (m *model) runGUI(c guiCmd) tea.Cmd {
 	switch c.Cmd {
+	case "update": // the panel's Update button, as U and its confirm in the terminal
+		if m.canUpdate() {
+			m.updating, m.updateErr = true, nil
+			return updateCmd(m.latest)
+		}
+	case "restart": // after an update: quit, and the panel starts the new cardhub -gui
+		if m.updated != "" {
+			return tea.Quit
+		}
 	case "screen":
 		m.gui.screen = ""
 		switch c.Screen {

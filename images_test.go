@@ -1,7 +1,9 @@
 package main
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"image"
 	"image/png"
@@ -12,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestImageURLsFindsMarkdownAndHTMLPictures(t *testing.T) {
@@ -81,5 +85,61 @@ func TestPruneImagesDropsOldThenLeastRecentlyOpened(t *testing.T) {
 	}
 	if strings.Join(left, ",") != "b.png,c.png" {
 		t.Fatalf("want b.png,c.png kept, got %v", left)
+	}
+}
+
+func TestInstallModTakesThePanelFromTheArchive(t *testing.T) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	add := func(name, body string) {
+		_ = tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg})
+		_, _ = tw.Write([]byte(body))
+	}
+	add("cardhub_9.9.9_darwin_arm64/cardhub", "bin")
+	add("cardhub_9.9.9_darwin_arm64/herdr/install.sh", "sh")
+	add("cardhub_9.9.9_darwin_arm64/herdr/cardhub/main.js", "new main")
+	add("cardhub_9.9.9_darwin_arm64/herdr/cardhub/x.svg", "<svg/>")
+	_ = tw.Close()
+	_ = gz.Close()
+
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "main.js"), []byte("old"), 0o644)
+	_ = os.MkdirAll(filepath.Join(dir, ".pictures"), 0o755)
+	if err := installMod(buf.Bytes(), "cardhub_9.9.9_darwin_arm64/herdr/cardhub/", dir); err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	main, _ := os.ReadFile(filepath.Join(dir, "main.js"))
+	if string(main) != "new main" || strings.Join(names, ",") != ".pictures,main.js,x.svg" {
+		t.Fatalf("want the new main.js and x.svg beside .pictures, got %q in %v", main, names)
+	}
+}
+
+func TestGUIUpdateButtonRunsTheUpdateThenRestarts(t *testing.T) {
+	m := newModel(nil, "o", 1, time.Minute, "", "")
+	m.gui = &guiOut{}
+	m.latest = "v99.0.0"
+	if st := m.guiState(); st.Update != "v99.0.0" || st.Updating == nil || st.Updating.Can {
+		t.Fatalf("a test build can't update itself: want the release shown without the button, got %+v", st.Updating)
+	}
+	if cmd := m.runGUI(guiCmd{Cmd: "update"}); cmd != nil || m.updating {
+		t.Fatal("a build from source must not replace itself")
+	}
+	if cmd := m.runGUI(guiCmd{Cmd: "restart"}); cmd != nil {
+		t.Fatal("restart before an update must do nothing")
+	}
+	m.updated = "v99.0.0" // as after a successful update
+	if st := m.guiState(); st.Updating.Done != "v99.0.0" {
+		t.Fatalf("want the installed release, got %+v", st.Updating)
+	}
+	if cmd := m.runGUI(guiCmd{Cmd: "restart"}); cmd == nil {
+		t.Fatal("restart after an update must quit")
+	} else if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("restart must quit cardhub -gui")
 	}
 }

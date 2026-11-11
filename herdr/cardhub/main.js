@@ -236,28 +236,28 @@ export default class CardHub extends View {
 
   // `cardhub -gui` runs in the hidden `cardhub` terminal: start it when it's missing, and replace a
   // terminal-only cardhub from before the GUI.
-  ensure(cx) {
-    cx.spawn(async (cx) => {
-      const live = terminals().filter((x) => x.name === "cardhub" && x.state === "live");
-      const gui = live.find((x) => (x.argv ?? []).includes("-gui"));
-      const pid = this.state?.pid;
-      if (gui) {
-        if (pid) {
-          let ok = false;
-          try { ok = (await exec("kill", ["-0", String(pid)], { timeout: 3000 })).code === 0; } catch { /* no */ }
-          if (ok !== this.alive) { this.alive = ok; cx.notify(); }
-        }
-        return;
+  ensure(cx) { cx.spawn(async (cx) => this.ensureNow(cx)); }
+
+  async ensureNow(cx) {
+    const live = terminals().filter((x) => x.name === "cardhub" && x.state === "live");
+    const gui = live.find((x) => (x.argv ?? []).includes("-gui"));
+    const pid = this.state?.pid;
+    if (gui) {
+      if (pid) {
+        let ok = false;
+        try { ok = (await exec("kill", ["-0", String(pid)], { timeout: 3000 })).code === 0; } catch { /* no */ }
+        if (ok !== this.alive) { this.alive = ok; cx.notify(); }
       }
-      this.alive = false;
-      cx.notify();
-      try {
-        for (const x of live) await hc(["kill", x.address]);
-        await hc(["run", "--bg", "--json", "--name", "cardhub", "--no-parent", "--cwd", home(), "--", CARDHUB, "-gui"]);
-        this.alive = true;
-      } catch (e) { console.log(`cardhub: couldn't start: ${e}`); }
-      cx.notify();
-    });
+      return;
+    }
+    this.alive = false;
+    cx.notify();
+    try {
+      for (const x of live) await hc(["kill", x.address]);
+      await hc(["run", "--bg", "--json", "--name", "cardhub", "--no-parent", "--cwd", home(), "--", CARDHUB, "-gui"]);
+      this.alive = true;
+    } catch (e) { console.log(`cardhub: couldn't start: ${e}`); }
+    cx.notify();
   }
 
   send(cx, command) {
@@ -401,16 +401,52 @@ export default class CardHub extends View {
         .child("cardhub -gui runs in a hidden terminal and fills this panel once it has synced the board."));
   }
 
-  footer({ t }, s) {
+  // A banner over the status boxes: CardHub isn't running, or a release is out, with an Update
+  // button as the terminal's U (then Restart, to run the new one).
+  footer(ui, s) {
+    const { t } = ui;
     const dead = this.alive === false;
-    const color = dead ? GH.red : GH.blue;
-    const text = dead ? "CardHub isn't running. This panel starts it again within 30 seconds."
-      : `CardHub ${s.update} is out: run cardhub update, then restart it.`;
+    const u = s?.updating; // absent from a cardhub older than the button
+    let color = dead ? GH.red : GH.blue, text, action = null;
+    if (dead) text = "CardHub isn't running. This panel starts it again within 30 seconds.";
+    else if (u?.busy) {
+      text = h_flex().gap(6).items_center().child(svg(ICON("spinner")).size(12).spin(900)).child(`Updating to ${s.update}…`);
+    } else if (u?.done) {
+      color = GH.green;
+      text = `CardHub ${u.done} is installed. Restart to use it.`;
+      action = this.button(ui, "restart", "refresh", "Restart", (_e, cx) => this.restart(cx), { primary: true, color: GH.green });
+    } else if (u?.error) {
+      color = GH.red;
+      text = `Update failed: ${u.error}`;
+      action = this.button(ui, "update", "", "Try again", (_e, cx) => this.send(cx, { cmd: "update" }));
+    } else if (u?.can) {
+      text = `CardHub ${s.update} is out.`;
+      action = this.button(ui, "update", "", "Update", (_e, cx) => this.send(cx, { cmd: "update" }), { primary: true, color: GH.blue, tip: "Download it, check it and replace this CardHub (and this panel)" });
+    } else if (u) {
+      text = `CardHub ${s.update} is out. This is a build from source: git pull, then make build.`;
+    } else {
+      text = `CardHub ${s.update} is out: run cardhub update, then restart it.`;
+    }
     return h_flex().flex_none().mx(12).mb(12).px(12).py(8).gap(8).items_center().rounded(8)
       .bg(tint(color, 0.12)).border(1).border_color(tint(color, 0.4))
       .child(div().size(7).rounded(4).flex_none().bg(color))
-      .child(div().flex_1().min_w(0).child(text));
+      .child(div().flex_1().min_w(0).child(text))
+      .when(Boolean(action), (el) => el.child(action));
   }
+
+  // After an update: cardhub -gui quits, and the panel starts the new one as soon as it's gone
+  // rather than at the next 30-second check.
+  restart(cx) {
+    this.send(cx, { cmd: "restart" });
+    cx.spawn(async (cx) => {
+      for (let i = 0; i < 20; i++) {
+        await cx.sleep(500);
+        if (!terminals().some((x) => x.name === "cardhub" && x.state === "live")) break;
+      }
+      await this.ensureNow(cx);
+    });
+  }
+
 
   // The terminal's footer boxes: Sync (with the refresh interval, pause and when the API budget
   // resets, in red once it's nearly gone) and AI link.

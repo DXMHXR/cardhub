@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -247,6 +248,77 @@ func installReleaseAt(ctx context.Context, tag, exe string) error {
 	}
 	if err := os.Rename(tmp.Name(), exe); err != nil {
 		return err
+	}
+	if dir := herdrModDir(); dir != "" {
+		if err := installMod(archive, name+"/herdr/cardhub/", dir); err != nil {
+			return fmt.Errorf("updated cardhub, but not its Herdr panel (%v); run herdr/install.sh from the release archive", err)
+		}
+	}
+	return nil
+}
+
+// herdrModDir is where Herdr keeps the cardhub mod, when it's installed there.
+func herdrModDir() string {
+	home := os.Getenv("HERDR_APP_HOME")
+	if home == "" {
+		h, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		home = filepath.Join(h, ".config", "herdr-app")
+	}
+	dir := filepath.Join(home, "mods", "cardhub")
+	if _, err := os.Stat(filepath.Join(dir, "main.js")); err != nil {
+		return ""
+	}
+	return dir
+}
+
+// installMod puts the archive's files under prefix (the Herdr mod) into dir,
+// as herdr/install.sh does. Herdr reloads a mod on every file saved in its
+// folder, so each lands by a rename from a hidden name, and main.js last.
+func installMod(archive []byte, prefix, dir string) error {
+	gz, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		return err
+	}
+	files := map[string][]byte{}
+	tr := tar.NewReader(gz)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		rel := strings.TrimPrefix(h.Name, prefix)
+		if h.Typeflag != tar.TypeReg || rel == h.Name || rel == "" || strings.Contains(rel, "/") {
+			continue
+		}
+		if files[rel], err = io.ReadAll(io.LimitReader(tr, 10<<20)); err != nil {
+			return err
+		}
+	}
+	if files["main.js"] == nil {
+		return errors.New("the archive has no Herdr panel")
+	}
+	names := make([]string, 0, len(files))
+	for n := range files {
+		if n != "main.js" {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	for _, n := range append(names, "main.js") {
+		tmp := filepath.Join(dir, ".update-"+n)
+		if err := os.WriteFile(tmp, files[n], 0o644); err != nil {
+			return err
+		}
+		if err := os.Rename(tmp, filepath.Join(dir, n)); err != nil {
+			os.Remove(tmp)
+			return err
+		}
 	}
 	return nil
 }

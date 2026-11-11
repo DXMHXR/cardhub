@@ -30,7 +30,7 @@ go install github.com/DXMHXR/cardhub@latest     # or, from a clone: make install
 
 If `cardhub` isn't found afterwards, add Go's bin folder to your PATH: `export PATH="$PATH:$(go env GOPATH)/bin"`. On macOS, allow a downloaded binary with `xattr -d com.apple.quarantine <path>/cardhub`.
 
-**Updating:** when a release is out the header shows `↑ vX.Y.Z`. Press `U` or run `cardhub update`: it downloads the release, checks it against `checksums.txt` and replaces itself. A build from source only shows the notice: `git pull && make build`.
+**Updating:** when a release is out the header shows `↑ vX.Y.Z`. Press `U` (in Herdr's panel, the **Update** button on the banner) or run `cardhub update`: it downloads the release, checks it against `checksums.txt` and replaces itself, and the Herdr panel too when it's installed. A build from source only shows the notice: `git pull && make build`.
 
 <details>
 <summary>Install with an AI agent</summary>
