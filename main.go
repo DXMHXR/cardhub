@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -130,6 +131,7 @@ func main() {
 	}
 	if *gui {
 		m.gui = &guiOut{dir: guiDir()}
+		go pruneImagesEvery(filepath.Join(m.gui.dir, "images"))
 	}
 	var p *tea.Program
 	m.hub = NewHub(func(added bool) { p.Send(linkMsg{added}) })

@@ -1,6 +1,6 @@
-import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input, TextView } from "gpui-base";
-import { theme, settings, home, hc, exec, terminals, readTextFile, writeTextFile, watchFolder } from "herdr";
+import { View, div, svg, image } from "gpui-kit";
+import { v_flex, h_flex, InputState, Input, TextView, Popup } from "gpui-base";
+import { theme, settings, home, appHome, hc, exec, terminals, readTextFile, writeTextFile, watchFolder } from "herdr";
 
 // CardHub's GUI for Herdr's side panel. It draws nothing of its own data: `cardhub -gui` (which this
 // mod keeps running in the hidden `cardhub` terminal) publishes what the panel shows as
@@ -9,6 +9,32 @@ import { theme, settings, home, hc, exec, terminals, readTextFile, writeTextFile
 const CARDHUB = "cardhub"; // on PATH; needs v0.8.0 or later (-gui)
 const DIR = `${home()}/Library/Application Support/cardhub/gui`;
 const ICON = (name) => `mods/cardhub/${name}.svg`;
+// Pictures in a detail: cardhub -gui downloads them to gui/images/, and image() only draws files
+// inside Herdr's own folder, so the panel copies each one here before drawing it.
+const CACHE = "mods/cardhub/.pictures"; // hidden: Herdr reloads a mod on any other file saved in its folder
+
+// A description or comment cut at its pictures (markdown ![alt](url) and HTML <img src>), so each
+// picture is drawn where it stands: [{text} | {url, alt}].
+const PICTURE = /!\[([^\]]*)\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)|<img\b([^>]*?)\bsrc\s*=\s*["']([^"']+)["']([^>]*)>/gi;
+// The pictures cardhub downloads: ones attached on GitHub. Others stay links.
+function isAttachment(url) {
+  return /^https:\/\/((private-)?user-images\.githubusercontent\.com\/|github\.com\/(user-attachments\/assets\/|.*\/assets\/))/.test(url);
+}
+
+function splitPictures(text) {
+  const parts = [];
+  let last = 0;
+  for (const m of (text ?? "").matchAll(PICTURE)) {
+    const url = (m[2] ?? m[4]).replace(/&amp;/g, "&");
+    if (!/^https?:\/\//.test(url)) continue;
+    if (m.index > last) parts.push({ text: text.slice(last, m.index) });
+    const alt = m[1] ?? (/\balt\s*=\s*["']([^"']*)["']/i.exec(`${m[3]} ${m[5]}`)?.[1] ?? "");
+    parts.push({ url, alt });
+    last = m.index + m[0].length;
+  }
+  if (last < (text ?? "").length) parts.push({ text: text.slice(last) });
+  return parts;
+}
 
 function tint(color, alpha) {
   if (typeof color !== "string" || !/^#[0-9a-f]{6}$/i.test(color)) return color;
@@ -52,6 +78,86 @@ function stateColor(state) {
 const REVIEW = { APPROVED: ["approved", GH.green], CHANGES_REQUESTED: ["changes requested", GH.red], REVIEW_REQUIRED: ["review required", GH.amber] };
 const CHECKS = { SUCCESS: ["✓ passing", GH.green], FAILURE: ["✗ failing", GH.red], ERROR: ["✗ error", GH.red], PENDING: ["◷ running", GH.amber], EXPECTED: ["◷ expected", GH.amber] };
 
+
+// --- search completion ---------------------------------------------------------------------------
+// The board's search box completes GitHub's project filter the way github.com's filter bar does:
+// qualifiers first ("lab" → label:), then the values that qualifier takes (label:b → label:bug),
+// a comma for another value of the same qualifier, "-" in front to negate. Values come from the
+// project (its single-select fields and their options) and from the cards seen on it so far.
+const SUGGEST_MAX = 8;
+
+function qualifiers(sg) {
+  const people = ["@me", ...(sg?.assignees ?? [])];
+  const plain = (xs) => xs.map((name) => ({ name }));
+  const fields = (sg?.fields ?? []).map((f) => ({ key: f.key, hint: `${f.name} field`, values: f.options ?? [] }));
+  const nullable = ["assignee", "label", "milestone", ...fields.map((f) => f.key)];
+  const list = [
+    { key: "assignee", hint: "Assigned to someone", values: plain(people) },
+    { key: "label", hint: "Has a label", values: plain(sg?.labels ?? []) },
+    ...fields,
+    { key: "is", hint: "State or kind of item", values: plain(["open", "closed", "merged", "draft", "issue", "pr"]) },
+    { key: "no", hint: "Missing a field", values: plain(nullable) },
+    { key: "has", hint: "Has a field set", values: plain(nullable) },
+    { key: "repo", hint: "In a repository", values: plain(sg?.repos ?? []) },
+    { key: "milestone", hint: "In a milestone", values: plain(sg?.milestones ?? []) },
+    { key: "author", hint: "Opened by someone", values: plain(people) },
+    { key: "reason", hint: "Why it was closed", values: plain(["completed", "not planned", "reopened"]) },
+    { key: "updated", hint: "Last updated", values: plain(["@today", ">@today-7d", ">@today-30d", "<@today-30d"]) },
+  ];
+  const seen = new Set();
+  return list.filter((q) => !seen.has(q.key) && seen.add(q.key));
+}
+
+// The token being typed: the text after the last space outside double quotes.
+function lastToken(text) {
+  let quoted = false, start = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '"') quoted = !quoted;
+    else if (text[i] === " " && !quoted) start = i + 1;
+  }
+  return { start, token: text.slice(start) };
+}
+
+const quoteValue = (v) => /[\s,"]/.test(v) ? `"${v.replace(/"/g, "")}"` : v;
+const unquote = (v) => v.replace(/^"/, "").replace(/"$/, "");
+
+// What to offer for text: [{label, hint, color, apply: the text after picking it, more: keep open}].
+function suggestions(text, sg) {
+  const { start, token } = lastToken(text);
+  const before = text.slice(0, start);
+  const neg = token.startsWith("-") ? "-" : "";
+  const body = token.slice(neg.length);
+  const qs = qualifiers(sg);
+  const colon = body.indexOf(":");
+  if (colon < 0) {
+    const q = body.toLowerCase();
+    const out = qs.filter((x) => x.key.startsWith(q) && x.key !== q).map((x) => ({
+      label: `${neg}${x.key}:`, hint: x.hint, apply: `${before}${neg}${x.key}:`, more: true,
+    }));
+    if (!neg && body && "or".startsWith(q) && before.trim()) out.push({ label: "OR", hint: "Match either side", apply: `${before}OR `, more: true });
+    return out;
+  }
+  const key = body.slice(0, colon).toLowerCase();
+  const qual = qs.find((x) => x.key === key);
+  if (!qual) return [];
+  const rest = body.slice(colon + 1);
+  let quoted = false, cut = 0;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '"') quoted = !quoted;
+    else if (rest[i] === "," && !quoted) cut = i + 1;
+  }
+  const done = rest.slice(0, cut);
+  const typed = unquote(rest.slice(cut)).toLowerCase();
+  const picked = new Set(done.split(",").map((v) => unquote(v).toLowerCase()).filter(Boolean));
+  const head = `${before}${neg}${body.slice(0, colon + 1)}${done}`;
+  const scored = qual.values
+    .filter((v) => !picked.has(v.name.toLowerCase()))
+    .map((v) => ({ v, at: v.name.toLowerCase().indexOf(typed) }))
+    .filter((x) => x.at >= 0 && !(x.v.name.toLowerCase() === typed && typed))
+    .sort((a, b) => (a.at === 0) === (b.at === 0) ? 0 : a.at === 0 ? -1 : 1);
+  return scored.map(({ v }) => ({ label: v.name, color: v.color, hint: `${neg}${key}:${quoteValue(v.name)}`, apply: `${head}${quoteValue(v.name)} ` }));
+}
+
 export default class CardHub extends View {
   init(_props, cx) {
     this.state = null;
@@ -63,9 +169,38 @@ export default class CardHub extends View {
     this.method = {};     // merge method picked per pull request
     this.filter = "";
     this.search = InputState.new({ placeholder: "Search, or filters like label:bug assignee:@me" });
-    this.search.on("submit", (_e, cx) => this.send(cx, { cmd: "search", text: this.search.value() }));
+    this.sugOpen = false; // the completion list under the search box
+    this.sugIdx = -1;     // its highlighted row, -1 for none
+    this.search.on("submit", (_e, cx) => {
+      if (this.sugOpen && this.sugIdx >= 0 && this.acceptSuggestion(cx)) return;
+      this.sugOpen = false;
+      this.send(cx, { cmd: "search", text: this.search.value() });
+      cx.notify();
+    });
+    this.search.on("change", (_e, cx) => {
+      if (this.applying) return;
+      this.sugOpen = this.searchFocused; this.sugIdx = -1; cx.notify();
+    });
+    // ↑ ↓ Tab Esc steer the completion list. As bindings in the search box's own context they
+    // beat the editor's and the window's (on_key_down hears them only after those).
+    try {
+      cx.bind_keys(["up", "down", "ctrl-p", "ctrl-n", "tab", "escape"].map((k) =>
+        ({ keystroke: k, action: `cardhub-sug-${k}`, context: "CardHubSearch > Input" })));
+    } catch (e) { console.log(`cardhub: completion keys not bound: ${e}`); }
+    this.search.on("focus", (_e, cx) => { this.searchFocused = true; this.sugOpen = true; this.sugIdx = -1; cx.notify(); });
+    this.search.on("blur", (_e, cx) => {
+      this.searchFocused = false;
+      // later, so a click on a suggestion lands before the list goes
+      cx.spawn(async (cx) => { await cx.sleep(200); if (!this.searchFocused) { this.sugOpen = false; cx.notify(); } });
+    });
     this.pick = InputState.new({ placeholder: "Type to filter…" });
     this.pick.on("change", (_e, cx) => { this.filter = this.pick.value(); cx.notify(); });
+    this.cached = {}; // picture file -> "copying" | "ready" | "failed"
+    cx.spawn(async () => {
+      try { await exec("/bin/mkdir", ["-p", `${appHome()}/${CACHE}`]); } catch { /* drawn as links then */ }
+      await this.prunePictures();
+    });
+    cx.timer.every(6 * 3600 * 1000, (cx) => cx.spawn(async () => this.prunePictures()));
     this.load(cx);
     cx.spawn(async (cx) => {
       for (;;) {
@@ -95,7 +230,8 @@ export default class CardHub extends View {
         if (this.search.value() !== s.search) this.search.set_value(s.search ?? "");
       }
       cx.notify();
-    } catch { /* caught mid-write: the next change reads it */ }
+    } catch { return; /* caught mid-write: the next change reads it */ }
+    if (await this.copyPictures(this.state.detail?.images)) cx.notify();
   }
 
   // `cardhub -gui` runs in the hidden `cardhub` terminal: start it when it's missing, and replace a
@@ -134,6 +270,107 @@ export default class CardHub extends View {
   }
 
   open(url) { if (url) exec("open", [url]).catch(() => {}); }
+
+  // cardhub -gui decides which pictures to keep (it prunes gui/images by age and size): drop the
+  // copies whose original is gone, so CACHE never outgrows it.
+  async prunePictures() {
+    const script = 'for f in "$1"/*; do [ -f "$f" ] && [ ! -e "$2/${f##*/}" ] && rm -f "$f" && echo "${f##*/}"; done; true';
+    try {
+      const r = await exec("/bin/sh", ["-c", script, "sh", `${appHome()}/${CACHE}`, `${DIR}/images`], { timeout: 20000 });
+      for (const f of (r.stdout ?? "").split("\n").filter(Boolean)) delete this.cached[f];
+    } catch (e) { console.log(`cardhub: pictures not pruned: ${e}`); }
+  }
+
+  // Copies the detail's new pictures into CACHE; true when any was copied (or failed to be).
+  async copyPictures(images) {
+    const todo = Object.values(images ?? {}).map((img) => img.file).filter((f) => f && !this.cached[f]);
+    for (const f of todo) this.cached[f] = "copying";
+    await Promise.all(todo.map(async (f) => {
+      let ok = false;
+      try { ok = (await exec("/bin/cp", [`${DIR}/images/${f}`, `${appHome()}/${CACHE}/${f}`], { timeout: 10000 })).code === 0; } catch (e) { console.log(`cardhub: picture not copied: ${e}`); }
+      this.cached[f] = ok ? "ready" : "failed";
+    }));
+    return todo.length > 0;
+  }
+
+  // Markdown with its pictures drawn in place, each at most width wide (and 560 tall), opening
+  // on GitHub when clicked. One still loading shows as such; one that can't be shown, as a link.
+  rich({ t }, id, text, images, width) {
+    const parts = splitPictures(text?.trim() ? text : "*(empty)*");
+    return v_flex().gap(8).children(parts.map((p, i) => {
+      if (p.text != null) {
+        return p.text.trim() ? TextView.markdown(`${id}-${i}`, p.text).selectable(true).on_link_click((url) => this.open(url)) : div();
+      }
+      const img = images?.[p.url];
+      const label = p.alt || p.url.replace(/^https?:\/\//, "").slice(0, 60);
+      const copied = img?.file ? this.cached[img.file] : null;
+      if (img?.file && copied === "ready") {
+        const scale = Math.min(1, (width || 320) / img.w, 560 / img.h);
+        const w = Math.max(1, Math.round(img.w * scale)), h = Math.max(1, Math.round(img.h * scale));
+        return div().id(`${id}-img-${i}`).flex_none().w(w).h(h).rounded(6).overflow_hidden().cursor_pointer()
+          .border(1).border_color(t.border).tooltip(p.alt ? `${p.alt} · open the original` : "Open the original")
+          .on_click(() => this.open(p.url))
+          .child(image(`${CACHE}/${img.file}`).w(w).h(h));
+      }
+      // not a GitHub attachment (a Google Drive link, say), or no images at all: cardhub
+      // downloaded none here (or isn't new enough to)
+      if (!images || !(p.url in images) && !isAttachment(p.url) || img?.error || copied === "failed") {
+        return h_flex().id(`${id}-img-${i}`).gap(6).items_center().text_size(11.5).text_color(t.muted).cursor_pointer()
+          .hover((st) => st.text_color(t.foreground)).on_click(() => this.open(p.url))
+          .child(svg(ICON("external")).size(11).flex_none())
+          .child(div().min_w(0).truncate().child(`Picture: ${label}${img?.error ? ` (${img.error})` : ""}`));
+      }
+      return h_flex().id(`${id}-img-${i}`).gap(6).items_center().text_size(11.5).text_color(t.dim)
+        .child(svg(ICON("spinner")).size(11).spin(900)).child(div().min_w(0).truncate().child(`Loading picture: ${label}`));
+    }));
+  }
+
+  currentSuggestions() {
+    if (!this.sugOpen || !this.state) return [];
+    return suggestions(this.search.value(), this.state.suggest).slice(0, SUGGEST_MAX);
+  }
+
+  // Puts the highlighted suggestion (or the one given) into the box; a qualifier keeps the list
+  // open for its values.
+  acceptSuggestion(cx, item) {
+    const it = item ?? this.currentSuggestions()[Math.max(0, this.sugIdx)];
+    if (!it) return false;
+    this.applying = true;
+    this.search.set_value(it.apply);
+    this.applying = false;
+    this.search.set_selected_range({ start: it.apply.length, end: it.apply.length });
+    this.search.focus();
+    this.sugOpen = true;
+    this.sugIdx = -1;
+    cx.notify();
+    return true;
+  }
+
+  searchKey(k, cx) {
+    const list = this.currentSuggestions();
+    if (!list.length) return;
+    if (k === "down" || k === "ctrl-n") this.sugIdx = (this.sugIdx + 1) % list.length;
+    else if (k === "up" || k === "ctrl-p") this.sugIdx = this.sugIdx <= 0 ? list.length - 1 : this.sugIdx - 1;
+    else if (k === "tab") { this.acceptSuggestion(cx); return; }
+    else if (k === "escape") this.sugOpen = false;
+    else return;
+    cx.notify();
+  }
+
+  suggestionList({ t, mono }, list, width) {
+    return v_flex().id("sug-list").w(width).mt(4).p(4).gap(1).rounded(8).bg(t.surface).border(1).border_color(t.border).shadow_md()
+      .children(list.map((it, i) => {
+        const on = i === this.sugIdx;
+        return h_flex().id(`sug-${i}`).h(26).px(8).gap(8).items_center().rounded(5).cursor_pointer()
+          .bg(on ? tint(GH.blue, 0.18) : t.surface).hover((st) => st.bg(on ? tint(GH.blue, 0.18) : t.hover))
+          .on_click((_e, cx) => this.acceptSuggestion(cx, it))
+          .when(Boolean(it.color), (el) => el.child(div().size(8).rounded(4).flex_none().bg(it.color)))
+          .child(div().flex_none().max_w(width * 0.55).truncate().font_family(mono).text_size(11.5).text_color(t.foreground).child(it.label))
+          .child(div().flex_1().min_w(0).truncate().text_right().text_size(11).text_color(t.dim).child(it.hint ?? ""));
+      }))
+      .child(h_flex().px(8).pt(4).pb(2).gap(10).border_t(1).border_color(t.border).text_size(10.5).text_color(t.dim)
+        .child("↑↓ choose").child("Tab or Enter pick").child("Esc close"));
+  }
 
   // --- parts --------------------------------------------------------------------------------------
   render() {
@@ -318,14 +555,26 @@ export default class CardHub extends View {
         .when(v.table, (el) => el.child(div().text_color(t.dim).child("▦")))
         .child(v.name);
     }));
-    const search = h_flex().flex_none().mx(12).mt(8).mb(10).h(30).px(9).gap(7).items_center().rounded(7)
+    const sug = this.currentSuggestions();
+    if (this.sugIdx >= sug.length) this.sugIdx = sug.length - 1;
+    const searchBox = h_flex().id("search-box").flex_none().h(30).px(9).gap(7).items_center().rounded(7)
       .border(1).border_color(t.input).bg(t.surface)
+      .key_context("CardHubSearch")
+      .on_action("cardhub-sug-up", (_e, cx) => this.searchKey("up", cx))
+      .on_action("cardhub-sug-down", (_e, cx) => this.searchKey("down", cx))
+      .on_action("cardhub-sug-ctrl-p", (_e, cx) => this.searchKey("up", cx))
+      .on_action("cardhub-sug-ctrl-n", (_e, cx) => this.searchKey("down", cx))
+      .on_action("cardhub-sug-tab", (_e, cx) => this.searchKey("tab", cx))
+      .on_action("cardhub-sug-escape", (_e, cx) => this.searchKey("escape", cx))
+      .on_size_change((sz, cx) => { if (Math.abs((this.searchW ?? 0) - sz.width) > 1) { this.searchW = sz.width; cx.notify(); } })
       .child(svg(ICON("search")).size(13).text_color(t.dim).flex_none())
       .child(Input.new(this.search).flex_1().min_w(0).h_full().text_size(12).text_color(t.foreground))
       .when(Boolean(s.search), (el) => el.child(div().id("clear-search").flex_none().text_color(t.dim).cursor_pointer()
         .hover((st) => st.text_color(t.foreground))
         .on_click((_e, cx) => { this.search.set_value(""); this.send(cx, { cmd: "search", text: "" }); })
         .child(svg(ICON("x")).size(12))));
+    const search = Popup.new("search-sug", searchBox).anchor("top_left").flex_none().mx(12).mt(8).mb(10)
+      .when(sug.length > 0 && Boolean(this.searchW), (el) => el.content(this.suggestionList(ui, sug, this.searchW)));
     const b = s.board;
     let content;
     if (!b) content = this.empty(ui, s.sync.error ? s.sync.error : "Loading the board…", !s.sync.error);
@@ -735,8 +984,8 @@ export default class CardHub extends View {
     const section = (title) => h_flex().pt(6).gap(8).items_center()
       .child(div().flex_none().font_semibold().text_color(color).child(title))
       .child(div().flex_1().h(1).bg(t.border));
-    const md = (id, text) => TextView.markdown(id, text?.trim() ? text : "*(empty)*").selectable(true)
-      .on_link_click((url) => this.open(url));
+    const bodyW = Math.max(120, (this.detailW ?? 360) - 32);
+    const md = (id, text, inset = 0) => this.rich(ui, id, text, d.images, bodyW - inset);
     let description;
     if (card.kind === "REDACTED") description = div().text_color(t.muted).child("You can't see this card's content.");
     else if (d.loading) description = h_flex().gap(6).items_center().text_color(t.muted).child(svg(ICON("spinner")).size(12).spin(900)).child("Loading…");
@@ -750,7 +999,9 @@ export default class CardHub extends View {
         .child(this.button(ui, "back", "back", "Back", (_e, cx) => { this.confirm = null; this.send(cx, { cmd: "close" }); }))
         .child(div().flex_1())
         .child(this.button(ui, "detail-open", "external", "Open on GitHub", () => this.open(card.url), { disabled: !card.url })))
-      .child(v_flex().id("detail-scroll").flex_1().min_h(0).overflow_y_scrollbar().child(v_flex().px(16).py(14).gap(10)
+      .child(v_flex().id("detail-scroll").flex_1().min_h(0).overflow_y_scrollbar()
+        .on_size_change((sz, cx) => { if (Math.abs((this.detailW ?? 0) - sz.width) > 1) { this.detailW = sz.width; cx.notify(); } })
+        .child(v_flex().px(16).py(14).gap(10)
         .child(div().text_size(16).font_semibold().child(card.title))
         .child(h_flex().flex_wrap().gap(8).items_center().text_size(11.5).text_color(t.muted)
           .when(Boolean(state), (el) => el.child(this.badge(color, state, true)))
@@ -767,7 +1018,7 @@ export default class CardHub extends View {
           .child(section(d.total > (d.comments?.length ?? 0) ? `Comments (latest ${d.comments.length} of ${d.total})` : `Comments (${d.total})`))
           .children((d.comments ?? []).map((c, i) => v_flex().id(`c-${i}`).gap(6).p(10).rounded(8).bg(t.surface).border(1).border_color(t.border)
             .child(h_flex().gap(6).text_size(11.5).child(div().font_semibold().child(`@${c.author}`)).child(div().text_color(t.dim).child(when(c.created))))
-            .child(md(`comment-${i}`, c.body)))))));
+            .child(md(`comment-${i}`, c.body, 22)))))));
   }
 
   mergeBox(ui, s, pr) {

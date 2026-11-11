@@ -135,6 +135,8 @@ type detail struct {
 	off     int // first line on screen
 	seq     int // tags fetches, so a late reply for a closed popup is dropped
 	pr      *PR // set when it shows a pull request from the Pull requests screen
+
+	images map[string]guiImage // -gui: the pictures in it, by URL, as they download
 }
 
 type detailMsg struct {
@@ -173,11 +175,12 @@ func (m *model) openDetailOn(it Item, color lipgloss.Color, pr *PR) tea.Cmd {
 	}
 }
 
-func (m *model) gotDetail(msg detailMsg) {
+func (m *model) gotDetail(msg detailMsg) tea.Cmd {
 	if !m.detail.open || msg.seq != m.detail.seq {
-		return
+		return nil
 	}
 	m.detail.loading, m.detail.data, m.detail.err = false, msg.data, msg.err
+	return m.detailImages()
 }
 
 // detailSize is the popup's outer width and the number of body lines it shows.

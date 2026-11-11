@@ -400,7 +400,7 @@ func prItem(p PR, repo string) Item {
 		state = "DRAFT"
 	}
 	return Item{ID: p.ID, Kind: "PULL_REQUEST", Title: p.Title, Number: p.Number, Repo: repo, URL: p.URL,
-		State: state, Assignees: p.Assignees, Labels: p.Labels, UpdatedAt: p.UpdatedAt}
+		State: state, Assignees: p.Assignees, Labels: p.Labels, UpdatedAt: p.UpdatedAt, Milestone: p.Milestone}
 }
 
 // openPRDetail opens the detail popup on a pull request.

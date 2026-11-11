@@ -553,7 +553,10 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case detailMsg:
-		m.gotDetail(msg)
+		return m, m.gotDetail(msg)
+
+	case imageMsg:
+		m.gotImage(msg)
 		return m, nil
 
 	case prsMsg:

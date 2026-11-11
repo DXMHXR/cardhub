@@ -36,6 +36,7 @@ type PR struct {
 	MergedAt       time.Time
 	ClosedAt       time.Time
 	MergedBy       string
+	Milestone      string
 }
 
 // RepoPRs is one page of a repo's pull requests plus what merging needs to know.
@@ -70,6 +71,7 @@ query($owner: String!, $name: String!, $states: [PullRequestState!], $n: Int!, $
         additions deletions changedFiles
         createdAt updatedAt mergedAt closedAt
         mergedBy { login }
+        milestone { title }
         comments { totalCount }
         labels(first: 5) { nodes { name } }
         assignees(first: 5) { nodes { login } }
@@ -128,10 +130,13 @@ func (c *Client) FetchPRs(ctx context.Context, repo string, closed bool) (*RepoP
 					MergedAt       time.Time `json:"mergedAt"`
 					ClosedAt       time.Time `json:"closedAt"`
 					MergedBy       *login    `json:"mergedBy"`
-					Comments       total     `json:"comments"`
-					Labels         names     `json:"labels"`
-					Assignees      logins    `json:"assignees"`
-					Reviews        struct {
+					Milestone      *struct {
+						Title string `json:"title"`
+					} `json:"milestone"`
+					Comments  total  `json:"comments"`
+					Labels    names  `json:"labels"`
+					Assignees logins `json:"assignees"`
+					Reviews   struct {
 						Nodes []struct {
 							State  string `json:"state"`
 							Author *login `json:"author"`
@@ -182,6 +187,9 @@ func (c *Client) FetchPRs(ctx context.Context, repo string, closed bool) (*RepoP
 		}
 		if n.MergedBy != nil {
 			p.MergedBy = n.MergedBy.Login
+		}
+		if n.Milestone != nil {
+			p.Milestone = n.Milestone.Title
 		}
 		for _, l := range n.Labels.Nodes {
 			p.Labels = append(p.Labels, l.Name)

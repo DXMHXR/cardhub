@@ -684,6 +684,9 @@ func TestGUIPublishesTheBoardAndTakesClicks(t *testing.T) {
 	if s.Project.Title != "Roadmap" || len(s.Board.Columns) != 2 || s.Board.Columns[0].Cards[0].Ref != "o/app#3" || !s.Board.Columns[0].More {
 		t.Fatalf("unexpected state: %+v", s.Board)
 	}
+	if s.Suggest == nil || len(s.Suggest.Repos) != 1 || s.Suggest.Repos[0] != "o/app" {
+		t.Fatalf("want the search box to suggest repo o/app, got %+v", s.Suggest)
+	}
 
 	// "Show more" loads another page of that column
 	if lim := m.cardLimits()["Todo"]; lim != guiCardsPerColumn {
@@ -727,5 +730,52 @@ func TestGUIPublishesTheBoardAndTakesClicks(t *testing.T) {
 	m.publish()
 	if after, _ := os.Stat(filepath.Join(dir, "state.json")); !after.ModTime().Equal(before.ModTime()) {
 		t.Error("an unchanged state was written again")
+	}
+}
+
+func TestGUISuggestionsOutliveASearch(t *testing.T) {
+	m := newModel(nil, "o", 1, time.Minute, "", "")
+	m.gui = &guiOut{}
+	fields := []SelectField{{Name: "Story Points", Options: []Option{{Name: "3", Color: "BLUE"}}}}
+	m.board = &Board{Fields: fields, Items: []Item{{Repo: "o/app", Labels: []string{"bug"}, Assignees: []string{"ana"}}}}
+	m.guiSuggest()
+	// a search hides the card: what it showed is still suggested
+	m.board = &Board{Fields: fields, Items: []Item{{Repo: "o/web", Labels: []string{"ui"}}}}
+	s := m.guiSuggest()
+	if strings.Join(s.Labels, ",") != "bug,ui" || strings.Join(s.Assignees, ",") != "ana" || len(s.Repos) != 2 {
+		t.Fatalf("want values from both syncs, got %+v", s)
+	}
+	if f := s.Fields[0]; f.Key != "story-points" || f.Options[0].Color != "#58a6ff" {
+		t.Fatalf("want the field as its qualifier with colored options, got %+v", f)
+	}
+	// another project starts over
+	m.number = 2
+	if s := m.guiSuggest(); strings.Join(s.Labels, ",") != "ui" {
+		t.Fatalf("want only the new project's labels, got %v", s.Labels)
+	}
+}
+
+func TestEveryDetailShowsTheMilestone(t *testing.T) {
+	var n itemNode
+	if err := json.Unmarshal([]byte(`{"id":"c","type":"ISSUE","content":{"title":"t","number":1,
+		"repository":{"nameWithOwner":"o/app"},"milestone":{"title":"Sprint 12"}}}`), &n); err != nil {
+		t.Fatal(err)
+	}
+	m := newModel(nil, "o", 1, time.Minute, "", "")
+	for name, it := range map[string]Item{
+		"card":         n.item(),
+		"issue":        issueItem(Issue{Number: 2, Milestone: "Sprint 12"}, "o/app"),
+		"pull request": prItem(PR{Number: 3, Milestone: "Sprint 12"}, "o/app"),
+	} {
+		found := false
+		for _, f := range m.guiCard(it).Fields {
+			found = found || f == [2]string{"Milestone", "Sprint 12"}
+		}
+		if !found {
+			t.Errorf("%s detail: want Milestone Sprint 12 in %v", name, m.guiCard(it).Fields)
+		}
+	}
+	if !strings.Contains(itemFields, "milestone") {
+		t.Error("board views don't load milestones")
 	}
 }

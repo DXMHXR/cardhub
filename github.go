@@ -71,8 +71,9 @@ type Item struct {
 	UpdatedAt time.Time
 	Values    map[string]string // field name -> value (single-select option, iteration, text, number, date)
 
-	// loaded for table views only
 	Milestone string
+
+	// loaded for table views only
 	Parent    string // parent issue, "#12 title"
 	LinkedPRs []int
 	SubDone   int // sub-issues progress
@@ -196,13 +197,15 @@ const itemSelection = `
                 title number url state
                 repository { nameWithOwner }
                 assignees(first: 5) { nodes { login } }
-                labels(first: 5) { nodes { name } }%s
+                labels(first: 5) { nodes { name } }
+                milestone { title }%s
               }
               ... on PullRequest {
                 title number url state isDraft
                 repository { nameWithOwner }
                 assignees(first: 5) { nodes { login } }
-                labels(first: 5) { nodes { name } }%s
+                labels(first: 5) { nodes { name } }
+                milestone { title }%s
               }
             }`
 
@@ -211,11 +214,9 @@ var (
 	itemFields = fmt.Sprintf(itemSelection, "", "")
 	// tableItemFields adds what only a table's columns show.
 	tableItemFields = fmt.Sprintf(itemSelection, `
-                milestone { title }
                 parent { number title }
                 subIssuesSummary { total completed }
-                closedByPullRequestsReferences(first: 5, includeClosedPrs: true) { nodes { number } }`, `
-                milestone { title }`)
+                closedByPullRequestsReferences(first: 5, includeClosedPrs: true) { nodes { number } }`, "")
 )
 
 type logins struct {

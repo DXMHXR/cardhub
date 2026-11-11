@@ -42,6 +42,8 @@ type guiOut struct {
 
 	screen string      // "issues" while the panel shows its Issues screen (the terminal has none)
 	issues issueScreen // the Issues screen
+
+	seen seenValues // what the search box suggests, gathered from every sync of this project
 }
 
 // ---- state: what the panel shows ----
@@ -62,6 +64,7 @@ type guiState struct {
 	PRs      guiPRs       `json:"prs"`
 	Issues   guiIssues    `json:"issues"`
 	Projects *guiProjects `json:"projects"`
+	Suggest  *guiSuggest  `json:"suggest"` // what the search box completes
 	Repos    *guiRepos    `json:"repos"`
 	Update   string       `json:"update,omitempty"` // a newer release, when there is one
 }
@@ -190,16 +193,17 @@ type guiCard struct {
 }
 
 type guiDetail struct {
-	Card     guiCard      `json:"card"`
-	Color    string       `json:"color"`
-	PR       *guiPR       `json:"pr"`
-	Loading  bool         `json:"loading"`
-	Error    string       `json:"error,omitempty"`
-	Author   string       `json:"author"`
-	Created  int64        `json:"created"`
-	Body     string       `json:"body"`
-	Comments []guiComment `json:"comments"`
-	Total    int          `json:"total"`
+	Card     guiCard             `json:"card"`
+	Color    string              `json:"color"`
+	PR       *guiPR              `json:"pr"`
+	Loading  bool                `json:"loading"`
+	Error    string              `json:"error,omitempty"`
+	Author   string              `json:"author"`
+	Created  int64               `json:"created"`
+	Body     string              `json:"body"`
+	Comments []guiComment        `json:"comments"`
+	Total    int                 `json:"total"`
+	Images   map[string]guiImage `json:"images,omitempty"` // the pictures in Body and Comments, by URL
 }
 
 type guiComment struct {
@@ -421,9 +425,10 @@ func (m model) guiState() guiState {
 			gb.Flows = append(gb.Flows, guiFlow{Moves: n, Dir: dir})
 		}
 		s.Board = gb
+		s.Suggest = m.guiSuggest()
 	}
 	if d := m.detail; d.open {
-		gd := &guiDetail{Card: m.guiCard(d.item), Color: string(d.color), Loading: d.loading, Error: errText(d.err)}
+		gd := &guiDetail{Card: m.guiCard(d.item), Color: string(d.color), Loading: d.loading, Error: errText(d.err), Images: d.images}
 		if d.pr != nil {
 			p := m.guiPR(*d.pr)
 			gd.PR = &p
@@ -514,6 +519,89 @@ func (m model) guiLinkPage() guiLinkPage {
 		pg.Activity = pg.Activity[:guiActivityMax]
 	}
 	return pg
+}
+
+// guiSuggest is what the panel's search box completes, as GitHub's filter bar
+// does: the project's single-select fields with their options, and the
+// people, labels, repositories and milestones seen on its cards so far.
+type guiSuggest struct {
+	Fields     []guiSuggestField `json:"fields"`
+	Assignees  []string          `json:"assignees"`
+	Labels     []string          `json:"labels"`
+	Repos      []string          `json:"repos"`
+	Milestones []string          `json:"milestones"`
+}
+
+type guiSuggestField struct {
+	Name    string      `json:"name"`
+	Key     string      `json:"key"` // the qualifier: "status" for Status
+	Options []guiOption `json:"options"`
+}
+
+type guiOption struct {
+	Name  string `json:"name"`
+	Color string `json:"color"` // #rrggbb
+}
+
+// seenValues collects a project's values across syncs: a search narrows the
+// board, and its suggestions shouldn't shrink with it.
+type seenValues struct {
+	project                              string
+	assignees, labels, repos, milestones map[string]bool
+}
+
+func (v *seenValues) add(project string, items []Item) {
+	if v.project != project || v.assignees == nil {
+		*v = seenValues{project: project, assignees: map[string]bool{}, labels: map[string]bool{},
+			repos: map[string]bool{}, milestones: map[string]bool{}}
+	}
+	for _, it := range items {
+		for _, a := range it.Assignees {
+			v.assignees[a] = true
+		}
+		for _, l := range it.Labels {
+			v.labels[l] = true
+		}
+		if it.Repo != "" {
+			v.repos[it.Repo] = true
+		}
+		if it.Milestone != "" {
+			v.milestones[it.Milestone] = true
+		}
+	}
+}
+
+func sortedKeys(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i]) < strings.ToLower(out[j]) })
+	return out
+}
+
+func (m model) guiSuggest() *guiSuggest {
+	b := m.board
+	if b == nil {
+		return nil
+	}
+	var v seenValues
+	if m.gui != nil {
+		m.gui.seen.add(fmt.Sprintf("%s/%d", m.owner, m.number), b.Items)
+		v = m.gui.seen
+	} else {
+		v.add("", b.Items)
+	}
+	s := &guiSuggest{Fields: []guiSuggestField{}, Assignees: sortedKeys(v.assignees), Labels: sortedKeys(v.labels),
+		Repos: sortedKeys(v.repos), Milestones: sortedKeys(v.milestones)}
+	for _, f := range b.Fields {
+		sf := guiSuggestField{Name: f.Name, Key: FieldKey(f.Name), Options: []guiOption{}}
+		for _, o := range f.Options {
+			sf.Options = append(sf.Options, guiOption{Name: o.Name, Color: colorHex(o.Color)})
+		}
+		s.Fields = append(s.Fields, sf)
+	}
+	return s
 }
 
 // publish writes state.json when what the panel shows changed. The panel
